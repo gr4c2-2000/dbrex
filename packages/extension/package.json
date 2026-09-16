@@ -1,0 +1,238 @@
+{
+  "name": "dbrex",
+  "displayName": "DbRex",
+  "description": "Query databases from .sql files, and let an AI work the same connections through MCP.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "publisher": "dbrex",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Data Science",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:sql"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "dbrex.runStatement",
+        "title": "DbRex: Run Statement Under Cursor"
+      },
+      {
+        "command": "dbrex.runFile",
+        "title": "DbRex: Run Whole File"
+      },
+      {
+        "command": "dbrex.cancel",
+        "title": "DbRex: Cancel Running Query"
+      },
+      {
+        "command": "dbrex.pickConnection",
+        "title": "DbRex: Select Active Connection"
+      },
+      {
+        "command": "dbrex.addConnection",
+        "title": "DbRex: Add Connection"
+      },
+      {
+        "command": "dbrex.setPassword",
+        "title": "DbRex: Set Password for Connection"
+      },
+      {
+        "command": "dbrex.unlockVault",
+        "title": "DbRex: Unlock Secret Vault"
+      },
+      {
+        "command": "dbrex.reload",
+        "title": "DbRex: Reload Connections"
+      },
+      {
+        "command": "dbrex.openResults",
+        "title": "DbRex: Open Results Panel"
+      },
+      {
+        "command": "dbrex.copyMcpConfig",
+        "title": "DbRex: Copy MCP Setup Command"
+      },
+      {
+        "command": "dbrex.refreshExplorer",
+        "title": "DbRex: Refresh Schema",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dbrex.openResult",
+        "title": "DbRex: Open Stored Result"
+      },
+      {
+        "command": "dbrex.pinResult",
+        "title": "DbRex: Pin Result",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "dbrex.deleteResult",
+        "title": "DbRex: Delete Result",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbrex.explain",
+        "title": "DbRex: Explain Statement Under Cursor"
+      },
+      {
+        "command": "dbrex.editConnection",
+        "title": "DbRex: Change a Connection Setting"
+      },
+      {
+        "command": "dbrex.copyResultSql",
+        "title": "DbRex: Copy Result SQL",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbrex.useResultSql",
+        "title": "DbRex: Insert Result SQL Into Editor",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "dbrex.insertSelect",
+        "title": "DbRex: Insert SELECT For This Item",
+        "icon": "$(insert)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dbrex.runStatement",
+        "key": "ctrl+enter",
+        "when": "editorLangId == sql"
+      },
+      {
+        "command": "dbrex.runFile",
+        "key": "ctrl+shift+enter",
+        "when": "editorLangId == sql"
+      },
+      {
+        "command": "dbrex.explain",
+        "key": "ctrl+alt+e",
+        "when": "editorLangId == sql"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dbrex",
+          "title": "DbRex",
+          "icon": "media/dbrex.svg"
+        }
+      ]
+    },
+    "views": {
+      "dbrex": [
+        {
+          "id": "dbrex.explorer",
+          "name": "Schema"
+        },
+        {
+          "id": "dbrex.history",
+          "name": "Results"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "dbrex.refreshExplorer",
+          "when": "view == dbrex.explorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dbrex.useResultSql",
+          "when": "view == dbrex.history",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbrex.copyResultSql",
+          "when": "view == dbrex.history",
+          "group": "inline@2"
+        },
+        {
+          "command": "dbrex.pinResult",
+          "when": "view == dbrex.history",
+          "group": "inline@3"
+        },
+        {
+          "command": "dbrex.deleteResult",
+          "when": "view == dbrex.history",
+          "group": "inline@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DbRex",
+      "properties": {
+        "dbrex.query.defaultLimit": {
+          "type": "number",
+          "default": 1000,
+          "description": "Append a row limit to SELECT statements that do not have one. 0 turns it off. Unlike the old default of 0, this is on: an accidental unbounded SELECT costs the server, not just you."
+        },
+        "dbrex.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check statements against the server as you type. Uses the engine's plan-only validation where it has one."
+        },
+        "dbrex.completion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Suggest table and column names from the active connection."
+        },
+        "dbrex.identity.user": {
+          "type": "string",
+          "default": "",
+          "description": "Value substituted for $user in connection files. Blank uses your OS username."
+        },
+        "dbrex.storage.results.mode": {
+          "type": "string",
+          "enum": [
+            "sliding",
+            "unlimited"
+          ],
+          "default": "sliding",
+          "description": "sliding drops the least recently used results once the cache reaches its cap; unlimited keeps everything."
+        },
+        "dbrex.storage.results.maxMb": {
+          "type": "number",
+          "default": 500,
+          "description": "Size cap for stored results, in megabytes."
+        },
+        "dbrex.log.level": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info",
+          "description": "How much the daemon writes to ~/.dbrex/logs."
+        },
+        "dbrex.mcp.showAgentResults": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show an AI agent's query results in the panel as soon as they finish. Only the stored result is shown; an agent can never send code to the panel."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@dbrex/client": "0.1.0",
+    "@dbrex/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  }
+}

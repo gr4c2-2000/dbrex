@@ -1,0 +1,6 @@
+src/**
+webview/**
+test/**
+tsconfig*.json
+**/*.map
+node_modules/**

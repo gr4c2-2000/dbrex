@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.vsix
+*.tsbuildinfo
+
+# Local daemon state (connections, secret vault, results, logs)
+.dbrex/
+
+# Deployment scripts carrying private host and user names
+deploy-*.sh
+
+# Editor / OS
+.DS_Store
+*.log

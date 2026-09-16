@@ -1,0 +1,13 @@
+{
+  "name": "@dbrex/client",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "src/index.ts",
+  "description": "Socket client for dbrexd, shared by the VSCode extension and the CLI.",
+  "dependencies": {
+    "@dbrex/core": "0.1.0"
+  },
+  "devDependencies": {}
+}

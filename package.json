@@ -1,0 +1,26 @@
+{
+  "name": "dbrex-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "workspaces": [
+    "packages/core",
+    "packages/client",
+    "packages/daemon",
+    "packages/extension",
+    "packages/cli"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/extension/tsconfig.webview.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "node build.js",
+    "build:prod": "NODE_ENV=production node build.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.0",
+    "esbuild": "^0.24.0"
+  }
+}

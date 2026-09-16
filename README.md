@@ -1,0 +1,82 @@
+# DbRex
+
+Query databases from `.sql` files in VSCode, and let an AI work the same
+connections through MCP.
+
+> **Deep beta.** This is early, pre-release software under active development.
+> Interfaces, the connection file format and the on-disk layout of `~/.dbrex`
+> can all change without a migration path. There is no published release yet —
+> you build it from source. Do not point it at anything you cannot afford to
+> have a query run against.
+
+Connections, credentials and results live in a small local daemon (`dbrexd`), not
+in the editor. The editor is one client; a terminal is another; an AI agent over
+MCP is a third. Closing the window closes a display, not the machinery — an
+agent keeps working.
+
+- `Ctrl+Enter` runs the statement under the cursor, `Ctrl+Shift+Enter` the file.
+- `-- @conn: name` and `-- @limit: n` steer individual statements.
+- **DbRex: Copy MCP Setup Command** gives you the one line that connects an agent.
+- Passwords are never accepted from an agent: the daemon routes the prompt to
+  this window or to a terminal, and only those may answer.
+
+MySQL, ClickHouse, Trino (including SSO) and S3-compatible object stores.
+
+Buckets browse out of the box over plain HTTPS. *Querying* files needs DuckDB,
+which is a 70 MB native component, so it is not bundled — run `dbrex
+install-duckdb` once if you want it.
+
+## Layout
+
+```
+packages/core        shared types, connection specs, SQL statement splitting
+packages/daemon      dbrexd — sessions, providers, secret vault, result store
+packages/client      the protocol clients speak to the daemon
+packages/cli         dbrex — terminal client and the MCP stdio bridge
+packages/extension   the VSCode extension, which ships the daemon and the CLI
+                     (its `webview/` holds the result panel front-end)
+```
+
+## Build
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+Package the extension:
+
+```bash
+cd packages/extension
+npx @vscode/vsce package --no-dependencies --allow-missing-repository --out dbrex.vsix
+code --install-extension dbrex.vsix
+```
+
+## CLI
+
+```
+dbrex status                       is the daemon up, is the vault unlocked
+dbrex connections                  list connections and what they are for
+dbrex query <conn> <sql>           run one statement and print the rows
+dbrex query <conn> -f <file.sql>   run a file, honouring -- @conn / -- @limit
+dbrex browse <conn> [path...]      walk the schema tree
+dbrex unlock                       unlock the secret vault for this daemon
+dbrex set-password <conn>          store a password for a connection
+dbrex results [n]                  recent stored results
+dbrex install-duckdb               add DuckDB, needed to query object stores
+dbrex mcp                          serve MCP over stdio (for AI agents)
+dbrex stop                         stop the daemon
+```
+
+## Configuration
+
+Connections live in `~/.dbrex/connections.json`, or in a workspace's own
+`.dbrex/connections.json`. Passwords do not: they go to the daemon's encrypted
+vault, an environment variable, or a command (`op read ...`), whichever the
+connection declares.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

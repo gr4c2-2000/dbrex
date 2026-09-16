@@ -1,0 +1,9 @@
+{
+  "name": "@dbrex/core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "src/index.ts",
+  "description": "Pure logic shared by daemon, extension and CLI. No I/O, no dependencies."
+}
