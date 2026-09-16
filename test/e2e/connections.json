@@ -1,0 +1,54 @@
+{
+  "connections": [
+    {
+      "name": "mysql",
+      "kind": "mysql",
+      "reference": "Disposable MySQL for the end-to-end run. Seeded from seed/mysql.sql.",
+      "secret": { "from": "env", "name": "MYSQL_PASSWORD" },
+      "options": {
+        "host": "mysql",
+        "port": 3306,
+        "user": "dbrex",
+        "database": "analytics"
+      }
+    },
+    {
+      "name": "clickhouse",
+      "kind": "clickhouse",
+      "reference": "Disposable ClickHouse for the end-to-end run. Seeded from seed/clickhouse.sql.",
+      "secret": { "from": "env", "name": "CLICKHOUSE_PASSWORD" },
+      "options": {
+        "host": "clickhouse",
+        "port": 8123,
+        "user": "dbrex",
+        "database": "analytics",
+        "protocol": "http"
+      }
+    },
+    {
+      "name": "lake",
+      "kind": "s3",
+      "reference": "MinIO standing in for an S3-compatible store. Browsing only; querying objects needs DuckDB.",
+      "secret": { "from": "env", "name": "S3_SECRET" },
+      "options": {
+        "endpoint": "minio:9000",
+        "region": "us-east-1",
+        "user": "dbrexkey",
+        "pathStyle": true,
+        "useSsl": false
+      }
+    },
+    {
+      "name": "vaulted",
+      "kind": "mysql",
+      "reference": "The same MySQL, but its password has to come from the encrypted vault.",
+      "secret": { "from": "vault" },
+      "options": {
+        "host": "mysql",
+        "port": 3306,
+        "user": "dbrex",
+        "database": "analytics"
+      }
+    }
+  ]
+}

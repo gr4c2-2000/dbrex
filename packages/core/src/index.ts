@@ -8,3 +8,4 @@ export * from './protocol';
 export * from './sql/split';
 export * from './sql/limit';
 export * from './sql/directives';
+export * from './sql/complete';

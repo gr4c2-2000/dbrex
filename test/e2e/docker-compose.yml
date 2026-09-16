@@ -1,0 +1,90 @@
+# A disposable copy of the world dbrex runs in.
+#
+# The point is the first five minutes: a machine that has never seen this
+# project installs it, starts a daemon it has to seed itself, and queries real
+# engines. Unit tests cannot fail the way a fresh install fails.
+#
+# Every service is throwaway. There are no volumes on purpose: a run that
+# depends on what the previous run left behind is not testing an installation.
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: analytics
+      MYSQL_USER: dbrex
+      MYSQL_PASSWORD: dbrexpw
+    volumes:
+      - ./seed/mysql.sql:/docker-entrypoint-initdb.d/00-seed.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpw"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: dbrex
+      CLICKHOUSE_PASSWORD: dbrexpw
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - ./seed/clickhouse.sql:/docker-entrypoint-initdb.d/00-seed.sql:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "dbrex", "--password", "dbrexpw", "-q", "SELECT 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: dbrexkey
+      MINIO_ROOT_PASSWORD: dbrexsecret
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # Creates the bucket and puts one object in it, then exits. The runner waits
+  # for this to finish rather than for minio alone, so a browse test never races
+  # an empty bucket.
+  minio-seed:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: >
+      sh -c "
+      mc alias set local http://minio:9000 dbrexkey dbrexsecret &&
+      mc mb --ignore-existing local/analytics &&
+      echo 'day,hits' > /tmp/events.csv &&
+      echo '2026-09-16,42' >> /tmp/events.csv &&
+      mc cp /tmp/events.csv local/analytics/events/events.csv
+      "
+
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mysql: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      minio-seed: { condition: service_completed_successfully }
+    environment:
+      # How the connections file reaches its passwords without a vault prompt.
+      MYSQL_PASSWORD: dbrexpw
+      CLICKHOUSE_PASSWORD: dbrexpw
+      S3_SECRET: dbrexsecret
+      # A home of its own, so the run cannot read a developer's real ~/.dbrex.
+      DBREX_HOME: /home/dbrex/.dbrex
+    volumes:
+      # Read-only: the verification copies the tree and builds the copy, so a
+      # run can never write into the working checkout.
+      - ../..:/src:ro
+    command: ["/opt/dbrex/verify.sh"]

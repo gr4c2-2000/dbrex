@@ -18,6 +18,7 @@ import {
   type ConnectionInfo,
 } from '@dbrex/core';
 import { configDir, daemonPath, socketPath } from './paths';
+import { FORMATS, defaultFormat, isFormat, render, type Format } from './format';
 import { installDuckDB } from './duckdb';
 import { runMcpBridge } from './mcp';
 
@@ -38,11 +39,16 @@ const USAGE = `dbrex ${VERSION}
   dbrex stop                         stop the daemon
 
   --workspace <dir>   speak for a workspace, so its .dbrex/connections.json applies
+  --format <name>     ${FORMATS.join(' | ')}. A terminal defaults to table, a pipe to tsv
 `;
 
 export async function main(argv: readonly string[]): Promise<number> {
   const args = [...argv];
   const workspace = takeOption(args, '--workspace');
+  // Lifted out before the command is taken, or `dbrex --format json query ...`
+  // reads `--format` as the command. Validated inside the try below, so a bad
+  // value reports itself the way every other bad argument does.
+  const format = takeOption(args, '--format');
   const command = args.shift();
 
   if (command === undefined || command === 'help' || command === '--help') {
@@ -59,7 +65,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   try {
-    return await run(command, args, workspace);
+    return await run(command, args, toFormat(format), workspace);
   } catch (e) {
     process.stderr.write(`dbrex: ${messageOf(e)}\n`);
     if (DbRexError.is(e) && e.details.hint) process.stderr.write(`  ${e.details.hint}\n`);
@@ -67,7 +73,12 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 }
 
-async function run(command: string, args: string[], workspace?: string): Promise<number> {
+async function run(
+  command: string,
+  args: string[],
+  format: Format,
+  workspace?: string,
+): Promise<number> {
   const socket = socketPath();
 
   if (command === 'status') {
@@ -159,7 +170,7 @@ async function run(command: string, args: string[], workspace?: string): Promise
         const connection = required(args.shift(), 'a connection name');
         const statements = readStatements(args);
         for (const statement of statements) {
-          await runOne(client, statement.connection ?? connection, statement.sql, statement.limit);
+          await runOne(client, statement.connection ?? connection, statement.sql, format, statement.limit);
         }
         return 0;
       }
@@ -201,7 +212,13 @@ async function attach(socket: string, workspace?: string): Promise<DbRexClient> 
   );
 }
 
-async function runOne(client: DbRexClient, connection: string, sql: string, limit?: number): Promise<void> {
+async function runOne(
+  client: DbRexClient,
+  connection: string,
+  sql: string,
+  format: Format,
+  limit?: number,
+): Promise<void> {
   const result = await client.query({
     op: 'query',
     connection,
@@ -214,11 +231,16 @@ async function runOne(client: DbRexClient, connection: string, sql: string, limi
     offset: 0,
     limit: Math.min(result.rowCount, 1_000),
   });
-  printTable(result.columns.map(c => c.name), page.rows);
-  process.stdout.write(
-    `${result.rowCount} row${result.rowCount === 1 ? '' : 's'}` +
-    `${result.stats.truncated ? ' (truncated)' : ''} in ${result.stats.elapsedMs}ms  [${result.resultId}]\n`,
-  );
+  process.stdout.write(render(result.columns, page.rows, renderOptions(format)));
+
+  // The summary is commentary, not data. Only a terminal gets it; a pipe gets
+  // the rows and nothing that would have to be stripped back out again.
+  if (process.stdout.isTTY) {
+    process.stdout.write(
+      `${result.rowCount} row${result.rowCount === 1 ? '' : 's'}` +
+      `${result.stats.truncated ? ' (truncated)' : ''} in ${result.stats.elapsedMs}ms  [${result.resultId}]\n`,
+    );
+  }
 }
 
 interface CliStatement {
@@ -264,28 +286,30 @@ function printConnections(connections: readonly ConnectionInfo[]): void {
   }
 }
 
-function printTable(columns: readonly string[], rows: readonly (readonly unknown[])[]): void {
-  if (columns.length === 0) return;
-  const widths = columns.map((name, i) =>
-    Math.min(60, Math.max(name.length, ...rows.map(row => cell(row[i]).length), 0)));
+/**
+ * How this result should be drawn.
+ *
+ * Width and colour come from the real stdout, so redirecting to a file gets a
+ * table sized for nothing in particular rather than one wrapped to whatever
+ * terminal happened to launch the command.
+ */
+function renderOptions(format: Format) {
+  const tty = process.stdout.isTTY === true;
+  return {
+    format,
+    ...(tty && process.stdout.columns ? { width: process.stdout.columns } : {}),
+    ...(tty ? { colour: true } : {}),
+  };
+}
 
-  const line = (values: readonly string[]): string =>
-    values.map((v, i) => v.padEnd(widths[i] ?? 0)).join('  ').trimEnd();
-
-  process.stdout.write(`${line(columns)}\n`);
-  process.stdout.write(`${widths.map(w => '-'.repeat(w)).join('  ')}\n`);
-  for (const row of rows) {
-    process.stdout.write(`${line(columns.map((_, i) => truncate(cell(row[i]), widths[i] ?? 0)))}\n`);
+function toFormat(chosen: string | undefined): Format {
+  if (chosen === undefined) return defaultFormat(process.stdout.isTTY === true);
+  if (!isFormat(chosen)) {
+    throw new DbRexError('config', `unknown format "${chosen}"`, {
+      hint: `one of: ${FORMATS.join(', ')}`,
+    });
   }
-}
-
-function cell(value: unknown): string {
-  if (value === null || value === undefined) return 'NULL';
-  return typeof value === 'object' ? JSON.stringify(value) : String(value);
-}
-
-function truncate(text: string, width: number): string {
-  return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`;
+  return chosen;
 }
 
 function required(value: string | undefined, what: string): string {
