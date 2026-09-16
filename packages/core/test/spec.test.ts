@@ -58,13 +58,13 @@ describe('Options', () => {
 });
 
 describe('substituteVars', () => {
-  const ctx = { user: 'marc', home: '/home/marc', env: { TOKEN: 's3cr3t' } };
+  const ctx = { user: 'user', home: '/home/user', env: { TOKEN: 's3cr3t' } };
 
   it('substitutes user, home, env and a leading tilde', () => {
-    expect(substituteVars('$user', ctx)).toBe('marc');
-    expect(substituteVars('$home/x', ctx)).toBe('/home/marc/x');
+    expect(substituteVars('$user', ctx)).toBe('user');
+    expect(substituteVars('$home/x', ctx)).toBe('/home/user/x');
     expect(substituteVars('$env:TOKEN', ctx)).toBe('s3cr3t');
-    expect(substituteVars('~/.ssh/id_ed25519', ctx)).toBe('/home/marc/.ssh/id_ed25519');
+    expect(substituteVars('~/.ssh/id_ed25519', ctx)).toBe('/home/user/.ssh/id_ed25519');
   });
 
   it('substitutes an unset env var to empty', () => {
@@ -77,6 +77,6 @@ describe('substituteVars', () => {
 
   it('walks nested structures', () => {
     expect(substituteDeep({ a: ['$user', { b: '$home' }], n: 1 }, ctx))
-      .toEqual({ a: ['marc', { b: '/home/marc' }], n: 1 });
+      .toEqual({ a: ['user', { b: '/home/user' }], n: 1 });
   });
 });

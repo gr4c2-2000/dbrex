@@ -45,7 +45,7 @@ function writeWorkspace(body: unknown): void {
   fs.writeFileSync(path.join(workspace, '.dbrex', 'connections.json'), JSON.stringify(body));
 }
 
-function registry(identityUser = 'marc'): ConnectionRegistry {
+function registry(identityUser = 'user'): ConnectionRegistry {
   return new ConnectionRegistry(providers, {
     configDir: path.join(home, '.dbrex'),
     identityUser,
@@ -70,7 +70,7 @@ describe('loading', () => {
   it('substitutes $user, $env and ~ before validating', () => {
     writeGlobal({ connections: [{ name: 'prod', kind: 'fake', host: '$env:TOKEN', user: '$user' }] });
     const spec = registry().find('prod').spec;
-    expect(spec.options).toMatchObject({ host: 'from-env', user: 'marc' });
+    expect(spec.options).toMatchObject({ host: 'from-env', user: 'user' });
   });
 
   it('keeps the reference text, which is what an agent reads before querying', () => {
@@ -85,7 +85,7 @@ describe('loading', () => {
       connections: [{
         name: 'prod', kind: 'fake', host: 'db',
         secret: { from: 'command', argv: ['op', 'read', 'op://vault/db/password'] },
-        tunnel: { host: 'bastion', user: 'marc' },
+        tunnel: { host: 'bastion', user: 'user' },
       }],
     });
     const spec = registry().find('prod').spec;
@@ -214,8 +214,8 @@ describe('reloading', () => {
 
   it('re-substitutes when the identity changes', () => {
     writeGlobal({ connections: [{ name: 'prod', kind: 'fake', host: 'db', user: '$user' }] });
-    const r = registry('marc');
-    expect(r.find('prod').spec.options['user']).toBe('marc');
+    const r = registry('user');
+    expect(r.find('prod').spec.options['user']).toBe('user');
 
     r.setOptions({ configDir: path.join(home, '.dbrex'), identityUser: 'other', home, env: {} });
     expect(r.find('prod').spec.options['user']).toBe('other');
@@ -230,7 +230,7 @@ describe('configurations written for the previous generation', () => {
     writeGlobal({
       connections: [{
         name: 'behind-bastion', kind: 'fake', host: 'db.internal',
-        ssh: { host: 'bastion.example', user: 'marc', identityFile: '~/.ssh/id_ed25519' },
+        ssh: { host: 'bastion.example', user: 'user', identityFile: '~/.ssh/id_ed25519' },
       }],
     });
 
@@ -238,7 +238,7 @@ describe('configurations written for the previous generation', () => {
     expect(r.loadProblems()).toEqual([]);
     expect(r.find('behind-bastion').spec.tunnel).toMatchObject({
       host: 'bastion.example',
-      user: 'marc',
+      user: 'user',
     });
   });
 
@@ -249,8 +249,8 @@ describe('configurations written for the previous generation', () => {
         ssh: { host: 'bastion.example', user: '$user', identityFile: '~/.ssh/id_ed25519' },
       }],
     });
-    expect(registry('marc').find('behind-bastion').spec.tunnel).toMatchObject({
-      user: 'marc',
+    expect(registry('user').find('behind-bastion').spec.tunnel).toMatchObject({
+      user: 'user',
       identityFile: `${home}/.ssh/id_ed25519`,
     });
   });

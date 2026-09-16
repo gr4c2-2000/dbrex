@@ -178,7 +178,7 @@
         "dbrex.query.defaultLimit": {
           "type": "number",
           "default": 1000,
-          "description": "Append a row limit to SELECT statements that do not have one. 0 turns it off. Unlike the old default of 0, this is on: an accidental unbounded SELECT costs the server, not just you."
+          "description": "Append a row limit to SELECT statements that do not have one. 0 turns it off. On by default: an accidental unbounded SELECT costs the server, not just you."
         },
         "dbrex.diagnostics.enabled": {
           "type": "boolean",

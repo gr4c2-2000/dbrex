@@ -182,7 +182,7 @@ describe('slot scoping', () => {
   it('separates connections that share a name but not an origin', () => {
     const resolver = new SecretResolver(vault, broker);
     const global = connection({}, 'global');
-    const workspace = connection({}, 'workspace:/home/marc/repo');
+    const workspace = connection({}, 'workspace:/home/user/repo');
     expect(resolver.slot(global, PASSWORD)).not.toBe(resolver.slot(workspace, PASSWORD));
   });
 

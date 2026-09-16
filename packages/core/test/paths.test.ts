@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { configDirFor, resolveSocketPath, type SocketEnvironment } from '../src/paths';
 
 const base: SocketEnvironment = {
-  home: '/home/marc',
+  home: '/home/user',
   tmpDir: '/tmp',
   uid: 1000,
 };
 
 describe('resolveSocketPath', () => {
   it('lives under the config directory', () => {
-    expect(resolveSocketPath(base).socketPath).toBe('/home/marc/.dbrex/run/dbrexd.sock');
+    expect(resolveSocketPath(base).socketPath).toBe('/home/user/.dbrex/run/dbrexd.sock');
   });
 
   it('gives every caller the same answer, whatever their session looks like', () => {
@@ -17,8 +17,8 @@ describe('resolveSocketPath', () => {
     // spawned by an editor may not — so the two looked for the daemon in
     // different places, one found it and the other reported "not connected",
     // and nothing about the symptom pointed at the cause.
-    const fromTerminal = resolveSocketPath({ ...base, home: '/home/marc' });
-    const fromSpawnedChild = resolveSocketPath({ home: '/home/marc', tmpDir: '/tmp', uid: 1000 });
+    const fromTerminal = resolveSocketPath({ ...base, home: '/home/user' });
+    const fromSpawnedChild = resolveSocketPath({ home: '/home/user', tmpDir: '/tmp', uid: 1000 });
     expect(fromTerminal.socketPath).toBe(fromSpawnedChild.socketPath);
   });
 
@@ -43,7 +43,7 @@ describe('resolveSocketPath', () => {
   it('moves to a short path rather than failing with EINVAL', () => {
     // A Unix socket path is capped at 108 bytes; a deep config directory blows
     // through it and `listen` fails with an error that says nothing useful.
-    const deep = `/home/marc/${'nested/'.repeat(20)}dbrex`;
+    const deep = `/home/user/${'nested/'.repeat(20)}dbrex`;
     const location = resolveSocketPath({ ...base, dbrexHome: deep });
 
     expect(location.socketPath).toBe('/tmp/dbrex-1000/dbrexd.sock');
@@ -58,13 +58,13 @@ describe('resolveSocketPath', () => {
   });
 
   it('keeps the directory to create alongside the socket', () => {
-    expect(resolveSocketPath(base).socketDir).toBe('/home/marc/.dbrex/run');
+    expect(resolveSocketPath(base).socketDir).toBe('/home/user/.dbrex/run');
   });
 });
 
 describe('configDirFor', () => {
   it('defaults to ~/.dbrex and honours DBREX_HOME', () => {
-    expect(configDirFor(base)).toBe('/home/marc/.dbrex');
+    expect(configDirFor(base)).toBe('/home/user/.dbrex');
     expect(configDirFor({ ...base, dbrexHome: '/opt/dbrex' })).toBe('/opt/dbrex');
   });
 });

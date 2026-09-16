@@ -564,13 +564,13 @@ describe('a private certificate authority', () => {
     // own authority, which is in nobody's default trust store; without this the
     // connection dies at the handshake with "unable to get local issuer
     // certificate" and never reaches S3 at all.
-    const sql = s3SetupSql({ ...base, useSsl: true, caCertPath: '/home/marc/corp-root.cer' }).join('\n');
-    expect(sql).toContain("SET ca_cert_file='/home/marc/corp-root.cer';");
+    const sql = s3SetupSql({ ...base, useSsl: true, caCertPath: '/home/user/corp-root.cer' }).join('\n');
+    expect(sql).toContain("SET ca_cert_file='/home/user/corp-root.cer';");
     expect(sql).toContain('SET enable_server_cert_verification=true;');
   });
 
   it('says nothing about certificates on a plain HTTP endpoint', () => {
-    const sql = s3SetupSql({ ...base, useSsl: false, caCertPath: '/home/marc/corp-root.cer' }).join('\n');
+    const sql = s3SetupSql({ ...base, useSsl: false, caCertPath: '/home/user/corp-root.cer' }).join('\n');
     expect(sql).not.toContain('ca_cert_file');
   });
 
