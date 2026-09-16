@@ -24,8 +24,15 @@ export type CompletionRequest =
   /** Anywhere else in a statement: the columns of the tables it names. */
   | { readonly kind: 'columns'; readonly tables: readonly string[] };
 
-/** A dotted identifier ending at the cursor, with the dot. */
-const QUALIFIED = /([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)*)\.$/;
+/**
+ * A dotted identifier the cursor sits inside.
+ *
+ * The trailing segment is optional, so `analytics.` and `analytics.ev` both ask
+ * for the children of `analytics`. Requiring the dot to be the last character
+ * meant completion worked until the user typed the first letter of the name
+ * they wanted, and then stopped.
+ */
+const QUALIFIED = /([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)*)\.(?:[A-Za-z_][\w$]*)?$/;
 /** A clause that is about to name a relation. */
 const NAMING = /\b(?:from|join|into|update|table)\s+[\w$]*$/i;
 /** Relations the statement already names. */

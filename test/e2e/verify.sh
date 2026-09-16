@@ -162,6 +162,25 @@ check_message "the failure explains itself" 'vault|locked|secret' \
 check "a prompt does not hang a script" 'done' \
   bash -c "timeout 20 ${DBREX[*]} query vaulted 'SELECT 1' </dev/null >/dev/null 2>&1; echo done"
 
+say "The interactive shell"
+# Driven down a pipe rather than a terminal. Tab cannot travel through a pipe,
+# so completion is covered by unit tests; what this proves is the part that
+# only breaks against a real server: the session opens, runs, and closes.
+check "a shell session runs a statement" '84210' \
+  bash -c "printf 'SELECT hits FROM events ORDER BY hits DESC;\n' | ${DBREX[*]} shell mysql"
+check "a statement may span several lines" '84210' \
+  bash -c "printf 'SELECT hits\nFROM events\nORDER BY hits DESC;\n' | ${DBREX[*]} shell mysql"
+check "the format can be changed mid-session" '"hits"' \
+  bash -c "printf '\\\\f json\nSELECT hits FROM events LIMIT 1;\n' | ${DBREX[*]} shell mysql"
+check "a connection can be changed mid-session" 'now on clickhouse' \
+  bash -c "printf '\\\\c clickhouse\nSELECT 1;\n' | ${DBREX[*]} shell mysql"
+check "a bad statement does not end the session" '84210' \
+  bash -c "printf 'SELECT * FROM nope;\nSELECT hits FROM events ORDER BY hits DESC;\n' | ${DBREX[*]} shell mysql 2>/dev/null"
+check "the schema lists from inside the shell" 'events' \
+  bash -c "printf '\\\\d analytics\n' | ${DBREX[*]} shell mysql"
+check "history is written" 'SELECT 1' \
+  bash -c "printf 'SELECT 1;\n' | ${DBREX[*]} shell mysql >/dev/null 2>&1; cat \"$DBREX_HOME/history\""
+
 say "A configuration change reaches a daemon that is already running"
 # The watcher is the reason a user does not have to restart anything after
 # editing connections.json. Asynchronous by nature, so this one gets a window

@@ -57,6 +57,7 @@ code --install-extension dbrex.vsix
 ## CLI
 
 ```
+dbrex shell [conn]                 interactive session; Tab completes from the server
 dbrex status                       is the daemon up, is the vault unlocked
 dbrex connections                  list connections and what they are for
 dbrex query <conn> <sql>           run one statement and print the rows
@@ -68,6 +69,33 @@ dbrex results [n]                  recent stored results
 dbrex install-duckdb               add DuckDB, needed to query object stores
 dbrex mcp                          serve MCP over stdio (for AI agents)
 dbrex stop                         stop the daemon
+```
+
+## Output
+
+A terminal gets a table sized to it, with numbers right-aligned and NULL dimmed
+so it cannot be mistaken for the string `"NULL"`. A pipe gets TSV and no summary
+line, because the next thing in the pipe is a program. `--format` overrides
+either: `table`, `json`, `csv`, `tsv` or `vertical`.
+
+```bash
+dbrex query prod "SELECT ..." --format json | jq '.[0].hits'
+dbrex query prod "SELECT ..." --format vertical    # one field per line
+```
+
+A table that does not fit shrinks its widest columns and marks what it cut. It
+never drops a column: a missing column reads as "the query returned no such
+column", which is not a thing a database tool may imply.
+
+## Verifying an installation
+
+`npm test` proves the code is self-consistent. `make verify` proves an
+installation works: a container that has never seen dbrex installs it from a
+cold tree, builds it, and queries real MySQL, ClickHouse and MinIO. Requires
+Docker; everything it starts is thrown away afterwards.
+
+```bash
+make verify
 ```
 
 ## Configuration

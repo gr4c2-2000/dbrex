@@ -7,8 +7,8 @@
  * Everything else here is convenience that falls out of already having a client.
  */
 
-import * as readline from 'node:readline';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { DbRexClient, ensureDaemon, isListening } from '@dbrex/client';
 import {
   DbRexError,
@@ -19,6 +19,8 @@ import {
 } from '@dbrex/core';
 import { configDir, daemonPath, socketPath } from './paths';
 import { FORMATS, defaultFormat, isFormat, render, type Format } from './format';
+import { askHidden, askSecret } from './prompt';
+import { runShell } from './shell';
 import { installDuckDB } from './duckdb';
 import { runMcpBridge } from './mcp';
 
@@ -28,6 +30,7 @@ const USAGE = `dbrex ${VERSION}
 
   dbrex status                       is the daemon up, is the vault unlocked
   dbrex connections                  list connections and what they are for
+  dbrex shell [conn]                 interactive session; Tab completes from the server
   dbrex query <conn> <sql>           run one statement and print the rows
   dbrex query <conn> -f <file.sql>   run a file, honouring -- @conn / -- @limit
   dbrex browse <conn> [path...]      walk the schema tree
@@ -166,6 +169,20 @@ async function run(
         return 0;
       }
 
+      case 'shell': {
+        const name = args.shift() ?? (await firstConnection(client));
+        // Awaited, not returned. `return promise` inside this try runs the
+        // finally as soon as the promise exists, which closed the client out
+        // from under the session on its first statement.
+        return await runShell({
+          client,
+          connection: name,
+          format,
+          historyFile: path.join(configDir(), 'history'),
+          execute: (on, sql, as) => runOne(client, on, sql, as),
+        });
+      }
+
       case 'query': {
         const connection = required(args.shift(), 'a connection name');
         const statements = readStatements(args);
@@ -182,6 +199,18 @@ async function run(
   } finally {
     client.close();
   }
+}
+
+/** The only connection there is, when the shell was started without a name. */
+async function firstConnection(client: DbRexClient): Promise<string> {
+  const { connections } = await client.call({ op: 'listConnections' });
+  const only = connections[0];
+  if (only === undefined) {
+    throw new DbRexError('config', 'no connections are configured', {
+      hint: 'add one to ~/.dbrex/connections.json, then run dbrex shell again',
+    });
+  }
+  return only.name;
 }
 
 /** A terminal client answers prompts; that is the whole point of running one. */
@@ -202,7 +231,7 @@ async function attach(socket: string, workspace?: string): Promise<DbRexClient> 
             // Only when someone is actually watching this terminal. A piped
             // `dbrex query` in a script must fail, not block forever.
             if (!process.stdin.isTTY) return undefined;
-            return askHidden(`${detail.prompt}: `);
+            return askSecret(`${detail.prompt}: `);
           case 'browser':
             process.stderr.write(`\n${detail.reason}\nOpen: ${detail.url}\n\n`);
             return true;
@@ -323,23 +352,6 @@ function takeOption(args: string[], name: string): string | undefined {
   const value = args[at + 1];
   args.splice(at, value === undefined ? 1 : 2);
   return value;
-}
-
-/** Read a line without echoing it. */
-function askHidden(prompt: string): Promise<string> {
-  return new Promise(resolve => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    const output = rl as unknown as { output?: NodeJS.WriteStream; _writeToOutput?: (text: string) => void };
-    output._writeToOutput = (text: string) => {
-      // Echo the prompt itself, swallow whatever is typed after it.
-      if (text.startsWith(prompt)) output.output?.write(prompt);
-    };
-    rl.question(prompt, answer => {
-      rl.close();
-      process.stdout.write('\n');
-      resolve(answer);
-    });
-  });
 }
 
 /* c8 ignore start — process wiring */

@@ -24,6 +24,10 @@ describe('what the cursor is asking for', () => {
     expect(request('SELECT * FROM analytics.|')).toEqual({ kind: 'children', path: ['analytics'] });
   });
 
+  it('keeps asking for the same children once a partial name is typed', () => {
+    expect(request('SELECT * FROM analytics.ev|')).toEqual({ kind: 'children', path: ['analytics'] });
+  });
+
   it('follows a dotted path to any depth', () => {
     expect(request('SELECT * FROM analytics.events.|'))
       .toEqual({ kind: 'children', path: ['analytics', 'events'] });
