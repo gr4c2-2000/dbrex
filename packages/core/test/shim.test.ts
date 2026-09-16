@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { MINIMUM_NODE_MAJOR, shimSource } from '../src/shim';
+import { MINIMUM_NODE_MAJOR, shimSource } from '../src/index';
 
 function writeShim(dir: string, cliPath: string): string {
   const file = path.join(dir, 'dbrex');

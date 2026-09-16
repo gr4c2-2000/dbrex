@@ -22,6 +22,13 @@ import { FORMATS, defaultFormat, isFormat, render, type Format } from './format'
 import { askHidden, askSecret } from './prompt';
 import { runShell } from './shell';
 import { installDuckDB } from './duckdb';
+import {
+  bundleDir,
+  defaultLinkDir,
+  describe as describeInstall,
+  install,
+  pathEntries,
+} from './install';
 import { runMcpBridge } from './mcp';
 
 export const VERSION = '0.1.0';
@@ -37,6 +44,7 @@ const USAGE = `dbrex ${VERSION}
   dbrex unlock                       unlock the secret vault for this daemon
   dbrex set-password <conn>          store a password for a connection
   dbrex results [n]                  recent stored results
+  dbrex install                     put the dbrex command on PATH
   dbrex install-duckdb              add DuckDB, needed to query object stores
   dbrex mcp                          serve MCP over stdio (for AI agents)
   dbrex stop                         stop the daemon
@@ -104,6 +112,19 @@ async function run(
 
   if (command === 'install-duckdb') {
     return installDuckDB(configDir());
+  }
+
+  // Before the daemon is reached for: installing is what someone does when
+  // nothing works yet, and it must not depend on anything already running.
+  if (command === 'install') {
+    const report = install({
+      from: bundleDir(),
+      configDir: configDir(),
+      linkDir: defaultLinkDir(),
+      pathEntries: pathEntries(),
+    });
+    process.stdout.write(describeInstall(report));
+    return 0;
   }
 
   if (command === 'stop') {

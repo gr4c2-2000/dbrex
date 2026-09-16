@@ -88,3 +88,21 @@ services:
       # run can never write into the working checkout.
       - ../..:/src:ro
     command: ["/opt/dbrex/verify.sh"]
+
+  # The same world, entered by someone who has nothing yet: no build, no
+  # node_modules, no dbrex on PATH. Separate from `runner` because a working
+  # build is no evidence that an installation works.
+  installer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      MYSQL_PASSWORD: dbrexpw
+      CLICKHOUSE_PASSWORD: dbrexpw
+      S3_SECRET: dbrexsecret
+      DBREX_HOME: /home/dbrex/.dbrex
+    volumes:
+      - ../..:/src:ro
+    command: ["/opt/dbrex/verify-install.sh"]

@@ -10,7 +10,7 @@ FROM node:20-bookworm-slim
 # the whole of dbrex except the editor front-end; pulling Electron in would
 # quadruple the image for one more assertion.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 
 # Not root. A daemon that only works as root is a bug this would otherwise hide,
@@ -19,7 +19,7 @@ RUN useradd --create-home --shell /bin/bash dbrex \
  && mkdir -p /opt/dbrex \
  && chown dbrex:dbrex /opt/dbrex
 
-COPY --chown=dbrex:dbrex --chmod=755 verify.sh /opt/dbrex/verify.sh
+COPY --chown=dbrex:dbrex --chmod=755 verify.sh verify-install.sh /opt/dbrex/
 COPY --chown=dbrex:dbrex connections.json /opt/dbrex/connections.json
 
 USER dbrex

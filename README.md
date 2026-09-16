@@ -26,6 +26,25 @@ Buckets browse out of the box over plain HTTPS. *Querying* files needs DuckDB,
 which is a 70 MB native component, so it is not bundled — run `dbrex
 install-duckdb` once if you want it.
 
+## Install
+
+```bash
+curl -sSL https://raw.githubusercontent.com/gr4c2-2000/dbrex/main/install.sh | sh
+```
+
+Checks for a Node 18 or newer, builds from source, installs the `dbrex` command
+into `~/.dbrex/bin` and links it into `~/.local/bin`, then installs the VSCode
+extension if it finds an editor. `--cli-only` skips the extension.
+
+The CLI half needs no editor. That is deliberate: the daemon is meant to outlive
+the editor, so it has to be installable without one.
+
+From a clone:
+
+```bash
+./install.sh
+```
+
 ## Layout
 
 ```
@@ -89,10 +108,16 @@ column", which is not a thing a database tool may imply.
 
 ## Verifying an installation
 
-`npm test` proves the code is self-consistent. `make verify` proves an
-installation works: a container that has never seen dbrex installs it from a
-cold tree, builds it, and queries real MySQL, ClickHouse and MinIO. Requires
-Docker; everything it starts is thrown away afterwards.
+`npm test` proves the code is self-consistent. `make verify` proves two things
+it cannot, in containers that have never seen dbrex:
+
+- `make verify-install` runs `install.sh` on a machine with no build and nothing
+  on PATH, then checks that `dbrex` answers — including after its build
+  directory is deleted, and when it is installed a second time.
+- `make verify-run` queries real MySQL, ClickHouse and MinIO.
+
+They are separate because a working build is no evidence that an installation
+works. Requires Docker; everything they start is thrown away afterwards.
 
 ```bash
 make verify

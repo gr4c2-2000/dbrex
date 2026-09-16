@@ -4,6 +4,7 @@ export * from './spec';
 export * from './provider';
 export * from './vars';
 export * from './paths';
+export * from './shim';
 export * from './protocol';
 export * from './sql/split';
 export * from './sql/limit';

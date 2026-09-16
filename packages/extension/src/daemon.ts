@@ -17,12 +17,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { DbRexClient, ensureDaemon } from '@dbrex/client';
-import { shimSource } from './shim';
 import {
   DbRexError,
   configDirFor,
   messageOf,
   resolveSocketPath,
+  shimSource,
   type ConnectionInfo,
   type ResultSummary,
   type SocketEnvironment,
