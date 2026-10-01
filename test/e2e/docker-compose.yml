@@ -117,6 +117,32 @@ services:
       printf 'not json at all\n' | rpk topic produce events --format '%v\n'
       "
 
+  # Security off on purpose. This verifies the SQL and Query DSL surfaces, not
+  # Elastic's TLS bootstrap, and a single-node cluster with certificates to
+  # distribute would add a step that fails for reasons unrelated to dbrex.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.license.self_generated.type: basic
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  elasticsearch-seed:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+    volumes:
+      - ./seed/elasticsearch.sh:/seed.sh:ro
+    entrypoint: ["sh", "/seed.sh"]
+
   minio:
     image: quay.io/minio/minio:latest
     command: server /data
@@ -154,6 +180,7 @@ services:
       postgres: { condition: service_healthy }
       clickhouse: { condition: service_healthy }
       minio-seed: { condition: service_completed_successfully }
+      elasticsearch-seed: { condition: service_completed_successfully }
       kafka-seed: { condition: service_completed_successfully }
     environment:
       # How the connections file reaches its passwords without a vault prompt.

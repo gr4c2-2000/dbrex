@@ -213,6 +213,45 @@ check_message "a name that is not a topic says so" 'not a topic' \
 check "a small budget bounds what a query reads" 'true' \
   "${DBREX[@]}" query bus-sampled "SELECT count(*) <= 20 AS within_budget FROM events"
 
+say "Elasticsearch, over SQL"
+# The free path. Elastic puts the SQL REST API in Basic and the JDBC driver
+# behind a paid tier, so this is the surface a JDBC-based tool cannot reach.
+check "a SELECT returns rows"            '84210'   "${DBREX[@]}" query es "SELECT kind, hits FROM events ORDER BY hits DESC"
+check "an aggregate works"               '3'       "${DBREX[@]}" query es "SELECT count(*) AS n FROM events"
+check "a quoted index name is accepted"  '84210'   "${DBREX[@]}" query es 'SELECT hits FROM "events" ORDER BY hits DESC'
+check "a full-text predicate works"      'ordinary' "${DBREX[@]}" query es "SELECT note FROM events WHERE MATCH(note, 'ordinary')"
+refuse "a bad statement is refused"      "${DBREX[@]}" query es "SELECT * FROM nope"
+check_message "and names what was wrong" 'nope|not_found|Unknown index' "${DBREX[@]}" query es "SELECT * FROM nope"
+
+say "Elasticsearch, over Query DSL"
+# The path for a cluster whose SQL surface is absent. Written the way Kibana's
+# console writes it, because that is where these bodies get copied from.
+check "a console-style request runs" '84210' \
+  "${DBREX[@]}" query es 'POST /events/_search
+{ "size": 10, "sort": [{ "hits": "desc" }] }'
+check "the document metadata comes back" '_id' \
+  "${DBREX[@]}" query es 'POST /events/_search
+{ "size": 1 }'
+# No path and no verb: the connection's own index supplies it.
+check "a bare body uses the connection index" 'scroll' \
+  "${DBREX[@]}" query es-events '{ "query": { "term": { "kind": "scroll" } } }'
+check_message "a bare body needs an index to go to" 'needs an index' \
+  "${DBREX[@]}" query es '{ "query": { "match_all": {} } }'
+check_message "a malformed body says so" 'JSON' \
+  "${DBREX[@]}" query es 'POST /events/_search
+{ "query": '
+
+say "Elasticsearch schema"
+check "indices list as tables"      'events'  "${DBREX[@]}" browse es
+check "the mapping lists fields"    'hits'    "${DBREX[@]}" browse es events
+# A text field is not aggregatable, so the .keyword multi-field is what a
+# GROUP BY actually needs and the tree has to offer it.
+check "a multi-field is offered"    'note.keyword' "${DBREX[@]}" browse es events
+check "a nested object is flattened to its dotted name" 'client.ip' "${DBREX[@]}" browse es events
+# A connection pinned to one index offers only that one, so the tree cannot
+# wander onto indices this connection was not meant to reach.
+check "a scoped connection browses only its index" 'events' "${DBREX[@]}" browse es-events
+
 say "Object store"
 check "buckets list without DuckDB" 'analytics' "${DBREX[@]}" browse lake
 check "objects list inside a bucket" 'events'   "${DBREX[@]}" browse lake analytics

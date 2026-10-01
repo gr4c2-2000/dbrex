@@ -112,6 +112,27 @@
         "database": "dev",
         "sslmode": "disable"
       }
+    },
+    {
+      "name": "es",
+      "kind": "elasticsearch",
+      "reference": "Disposable Elasticsearch for the end-to-end run. Security is off; no secret source.",
+      "options": {
+        "host": "elasticsearch",
+        "port": 9200,
+        "protocol": "http"
+      }
+    },
+    {
+      "name": "es-events",
+      "kind": "elasticsearch",
+      "reference": "The same cluster, scoped to one index, so a Query DSL body needs no path.",
+      "options": {
+        "host": "elasticsearch",
+        "port": 9200,
+        "protocol": "http",
+        "index": "events"
+      }
     }
   ]
 }

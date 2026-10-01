@@ -8,6 +8,7 @@
 
 import type { Provider } from '@dbrex/core';
 import { clickhouseProvider } from './clickhouse';
+import { elasticsearchProvider } from './elasticsearch';
 import { kafkaProvider } from './kafka';
 import { mysqlProvider } from './mysql';
 import { postgresProvider } from './postgres';
@@ -15,5 +16,13 @@ import { s3Provider } from './s3';
 import { trinoProvider } from './trino';
 
 export function builtinProviders(): Provider[] {
-  return [mysqlProvider, postgresProvider, clickhouseProvider, trinoProvider, s3Provider, kafkaProvider];
+  return [
+    mysqlProvider,
+    postgresProvider,
+    clickhouseProvider,
+    trinoProvider,
+    s3Provider,
+    kafkaProvider,
+    elasticsearchProvider,
+  ];
 }

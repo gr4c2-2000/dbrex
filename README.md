@@ -23,8 +23,9 @@ agent keeps working.
   this window or to a terminal, and only those may answer.
 
 MySQL, PostgreSQL, ClickHouse, Trino (including SSO), S3-compatible object
-stores and Kafka. RisingWave needs no connector of its own: it speaks the
-PostgreSQL wire protocol, so `kind: postgres` on port 4566 is the whole of it.
+stores, Kafka, and Elasticsearch with OpenSearch. RisingWave needs no connector
+of its own: it speaks the PostgreSQL wire protocol, so `kind: postgres` on port
+4566 is the whole of it.
 
 Buckets browse out of the box over plain HTTPS. *Querying* files needs DuckDB,
 which is a 70 MB native component, so it is not bundled — run `dbrex
@@ -246,6 +247,65 @@ the client goes there next.
 For a topic that has to land somewhere durable and keep up, this is the wrong
 tool and an engine built for it is the right one — RisingWave's `CREATE TABLE
 ... WITH (connector = 'kafka')`, reachable through the postgres provider above.
+
+### Elasticsearch and OpenSearch
+
+One `kind: elasticsearch` for both. Which fork a cluster is comes from asking it
+at connect, not from declaring it: OpenSearch serves its SQL on
+`/_plugins/_sql` and answers in a different shape, and a user who has to get
+that right by hand will sometimes get it wrong.
+
+```json
+{
+  "name": "logs",
+  "kind": "elasticsearch",
+  "secret": { "from": "vault" },
+  "options": {
+    "host": "elastic.example",
+    "port": 9200,
+    "protocol": "https",
+    "user": "$user"
+  }
+}
+```
+
+Leave `user` out for a cluster with security disabled; no credential is sent and
+nothing prompts. Set `index` to pin a connection to one index — it is then the
+only one browsed, and a Query DSL body needs no path.
+
+Statements come in two kinds and the right one is chosen by looking at them.
+
+```sql
+-- SQL, on any cluster whose SQL surface is enabled
+SELECT kind, count(*) AS n
+FROM "logs-2026.10.01"
+GROUP BY kind
+```
+
+```
+POST /logs-2026.10.01/_search
+{ "query": { "match": { "message": "timeout" } }, "size": 50 }
+```
+
+Anything starting with `{`, `GET` or `POST` is a Query DSL request, written the
+way Kibana's console writes it. Everything else is SQL. The DSL path needs
+nothing installed, which is the path for a cluster too old for SQL or without
+the plugin.
+
+**On licensing.** Elastic puts "Elasticsearch SQL APIs & CLI" in the free Basic
+tier and its JDBC and ODBC drivers behind a paid one, so DbRex reaches SQL over
+HTTP on clusters where a JDBC-based tool cannot. OpenSearch gates nothing: its
+SQL plugin is Apache-2.0 and ships in every distribution but the minimal one.
+
+Documents become rows by taking the union of the fields a page actually has, in
+first-seen order, with `_index`, `_id` and `_score` in front. A nested object
+stays a value rather than being flattened into invented columns. The schema tree
+reads the mapping, so it works on a cluster with no SQL at all, and it offers
+`.keyword` multi-fields because `text` is not aggregatable and the keyword is
+what a `GROUP BY` needs.
+
+Elasticsearch SQL is a small dialect: no joins, and one index or pattern per
+statement. A statement it rejects comes back with the engine's own reason.
 
 ### A connection the file carries itself
 
