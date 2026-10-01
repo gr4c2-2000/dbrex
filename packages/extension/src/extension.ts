@@ -19,6 +19,7 @@ import { Diagnostics, Schema, registerCompletion } from './lsp';
 import { ResultsPanel } from './panel';
 import { Session } from './session';
 import { ResultsTree, SchemaTree } from './trees';
+import { registerFind } from './find';
 import { placeBlock } from './insert';
 import { addConnection, editConnectionOption } from './wizard';
 
@@ -122,6 +123,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await vscode.window.showTextDocument(editor.document, editor.viewColumn);
   };
   context.subscriptions.push({ dispose: () => panel.dispose() });
+
+  context.subscriptions.push(registerFind(schema, insertIntoEditor));
 
   const runner = new Runner(connect, session, panel, output);
 

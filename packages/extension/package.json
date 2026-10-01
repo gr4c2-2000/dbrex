@@ -61,6 +61,11 @@
         "title": "DbRex: Copy MCP Setup Command"
       },
       {
+        "command": "dbrex.findInSchema",
+        "title": "DbRex: Find in Schema",
+        "icon": "$(search)"
+      },
+      {
         "command": "dbrex.refreshExplorer",
         "title": "DbRex: Refresh Schema",
         "icon": "$(refresh)"
@@ -118,6 +123,11 @@
         "command": "dbrex.explain",
         "key": "ctrl+alt+e",
         "when": "editorLangId == sql"
+      },
+      {
+        "command": "dbrex.findInSchema",
+        "key": "ctrl+alt+f",
+        "when": "editorLangId == sql"
       }
     ],
     "viewsContainers": {
@@ -143,6 +153,11 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "dbrex.findInSchema",
+          "when": "view == dbrex.explorer",
+          "group": "navigation@0"
+        },
         {
           "command": "dbrex.refreshExplorer",
           "when": "view == dbrex.explorer",
