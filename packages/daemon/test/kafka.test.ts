@@ -22,7 +22,7 @@ import {
   topicsInSql,
   widen,
   windowFor,
-} from '../src/providers/kafka';
+  foldCaseCollisions,} from '../src/providers/kafka';
 import { builtinProviders } from '../src/providers/builtin';
 
 function field(name: string): FieldSpec | undefined {
@@ -455,5 +455,69 @@ describe('the closed sets a connection file is checked against', () => {
     expect([...SASL_MECHANISMS]).toEqual(['plain', 'scram-sha-256', 'scram-sha-512']);
     expect([...MESSAGE_FORMATS]).toEqual(['json', 'text']);
     expect([...START_POSITIONS]).toEqual(['latest', 'earliest']);
+  });
+});
+
+describe('fields that differ only in case', () => {
+  const fold = (objects: readonly unknown[]) =>
+    foldCaseCollisions(objects.map(o => JSON.stringify(o)));
+
+  const parsed = (result: { lines: string[] }) =>
+    result.lines.map(l => JSON.parse(l) as Record<string, unknown>);
+
+  it('leaves a field nobody spells two ways exactly as it is', () => {
+    const result = fold([{ isWifi: true }, { isWifi: false }]);
+    expect(parsed(result)).toEqual([{ isWifi: true }, { isWifi: false }]);
+    expect(result.unified).toEqual([]);
+  });
+
+  it('unifies two spellings across messages, first seen winning', () => {
+    const result = fold([{ isWiFi: 1 }, { isWifi: 2 }]);
+    expect(parsed(result)).toEqual([{ isWiFi: 1 }, { isWiFi: 2 }]);
+    expect(result.unified).toEqual(['isWiFi']);
+  });
+
+  it('keeps every value, only renaming the key', () => {
+    const result = fold([{ a: 1, isWifi: true }, { ISWIFI: false, b: 2 }]);
+    expect(parsed(result)).toEqual([{ a: 1, isWifi: true }, { isWifi: false, b: 2 }]);
+  });
+
+  it('reaches inside nested objects', () => {
+    const result = fold([{ p: { isWiFi: 1 } }, { p: { iswifi: 2 } }]);
+    expect(parsed(result)).toEqual([{ p: { isWiFi: 1 } }, { p: { isWiFi: 2 } }]);
+    expect(result.unified).toEqual(['p.isWiFi']);
+  });
+
+  it('reaches inside arrays of objects', () => {
+    const result = fold([{ xs: [{ isWiFi: 1 }] }, { xs: [{ ISWIFI: 2 }] }]);
+    expect(parsed(result)).toEqual([{ xs: [{ isWiFi: 1 }] }, { xs: [{ isWiFi: 2 }] }]);
+  });
+
+  it('scopes a name to its path, so unrelated fields do not drag each other', () => {
+    // `meta.ID` must not be renamed because `payload.id` was seen first.
+    const result = fold([{ payload: { id: 1 }, meta: { ID: 2 } }]);
+    expect(parsed(result)).toEqual([{ payload: { id: 1 }, meta: { ID: 2 } }]);
+    expect(result.unified).toEqual([]);
+  });
+
+  it('reports the field when one message carries both spellings', () => {
+    // One value has to go, the same loss JSON takes on a repeated key. What
+    // matters is that it is named rather than folded in silence.
+    const result = fold([{ isWifi: 1, isWiFi: 2 }]);
+    expect(result.unified).toEqual(['isWifi']);
+    expect(parsed(result)).toEqual([{ isWifi: 2 }]);
+  });
+
+  it('passes a line that is not JSON straight through', () => {
+    expect(foldCaseCollisions(['not json at all']).lines).toEqual(['not json at all']);
+  });
+
+  it('leaves nulls, numbers and strings alone', () => {
+    const result = fold([{ a: null, b: 1, c: 'x', d: [1, 2] }]);
+    expect(parsed(result)).toEqual([{ a: null, b: 1, c: 'x', d: [1, 2] }]);
+  });
+
+  it('handles an empty window', () => {
+    expect(foldCaseCollisions([])).toEqual({ lines: [], unified: [] });
   });
 });

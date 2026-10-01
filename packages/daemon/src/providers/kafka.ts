@@ -311,6 +311,62 @@ export function envelope(record: KafkaRecord, format: 'json' | 'text'): string {
   return JSON.stringify({ ...meta, message: record.value });
 }
 
+/**
+ * Unify field names that differ only in case.
+ *
+ * DuckDB struct field names are case-insensitive, and `union_by_name` merges
+ * every line of the window into one struct. Two producers spelling the same
+ * field `isWifi` and `isWiFi` are therefore a duplicate field, and read_json
+ * refuses the whole window with "Duplicate name ... in struct". Its own advice
+ * is `ignore_errors = true`, which answers a different question: that silently
+ * drops data, and a tool whose job is showing you your data may not do that.
+ *
+ * So the ambiguity is removed where it is created. The first spelling seen for a
+ * given field wins and later ones are rewritten to it. A field nobody spells two
+ * ways is untouched, keeping its exact case, because the first spelling seen is
+ * its own. Scoped per nesting path, so `payload.id` and `meta.ID` do not drag
+ * each other around.
+ *
+ * Where one message carries both spellings, one value has to go — the same loss
+ * JSON itself takes on a repeated key — so those fields are named in the log
+ * rather than quietly folded.
+ */
+export function foldCaseCollisions(lines: readonly string[]): { lines: string[]; unified: string[] } {
+  const canonical = new Map<string, string>();
+  const unified = new Set<string>();
+
+  const walk = (value: unknown, prefix: string): unknown => {
+    if (Array.isArray(value)) return value.map(v => walk(v, prefix));
+    if (value === null || typeof value !== 'object') return value;
+
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      const slot = `${prefix}\u001f${key.toLowerCase()}`;
+      const seen = canonical.get(slot);
+      let name = key;
+      if (seen === undefined) {
+        canonical.set(slot, key);
+      } else if (seen !== key) {
+        name = seen;
+        unified.add(prefix.length > 0 ? `${prefix}.${seen}` : seen);
+      }
+      out[name] = walk(nested, prefix.length > 0 ? `${prefix}.${name}` : name);
+    }
+    return out;
+  };
+
+  const out = lines.map(line => {
+    try {
+      return JSON.stringify(walk(JSON.parse(line) as unknown, ''));
+    } catch {
+      // Not JSON. The `text` format writes a `message` string, which has no
+      // fields to collide, and a line we cannot parse is not ours to rewrite.
+      return line;
+    }
+  });
+  return { lines: out, unified: [...unified] };
+}
+
 function parseJsonObject(value: string): Record<string, unknown> | undefined {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -763,8 +819,17 @@ class KafkaSession implements Session {
       return;
     }
 
+    // Spelled one way per field before DuckDB sees them, or a field two
+    // producers cased differently fails the whole window.
+    const { lines: spelled, unified } = foldCaseCollisions(lines);
+    if (unified.length > 0) {
+      this.io.log('warn', 'kafka fields differing only in case were unified', {
+        connection: this.config.connection, topic, fields: unified,
+      });
+    }
+
     const file = path.join(this.spoolDir(), `${topic.replace(/[^\w.-]/g, '_')}.ndjson`);
-    fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
+    fs.writeFileSync(file, spelled.join('\n') + '\n', { mode: 0o600 });
     try {
       await connection.run(materializeSql(topic, file, this.config.format));
     } catch (e) {
@@ -774,7 +839,7 @@ class KafkaSession implements Session {
     }
 
     this.materialized.add(topic);
-    this.schemas.set(topic, inferColumns(lines));
+    this.schemas.set(topic, inferColumns(spelled));
     this.io.log('debug', 'kafka topic materialised', {
       connection: this.config.connection, topic, messages: lines.length,
     });
