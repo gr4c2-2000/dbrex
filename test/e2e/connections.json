@@ -4,7 +4,10 @@
       "name": "mysql",
       "kind": "mysql",
       "reference": "Disposable MySQL for the end-to-end run. Seeded from seed/mysql.sql.",
-      "secret": { "from": "env", "name": "MYSQL_PASSWORD" },
+      "secret": {
+        "from": "env",
+        "name": "MYSQL_PASSWORD"
+      },
       "options": {
         "host": "mysql",
         "port": 3306,
@@ -13,10 +16,29 @@
       }
     },
     {
+      "name": "postgres",
+      "kind": "postgres",
+      "reference": "Disposable PostgreSQL for the end-to-end run. Seeded from seed/postgres.sql.",
+      "secret": {
+        "from": "env",
+        "name": "POSTGRES_PASSWORD"
+      },
+      "options": {
+        "host": "postgres",
+        "port": 5432,
+        "user": "dbrex",
+        "database": "analytics",
+        "sslmode": "disable"
+      }
+    },
+    {
       "name": "clickhouse",
       "kind": "clickhouse",
       "reference": "Disposable ClickHouse for the end-to-end run. Seeded from seed/clickhouse.sql.",
-      "secret": { "from": "env", "name": "CLICKHOUSE_PASSWORD" },
+      "secret": {
+        "from": "env",
+        "name": "CLICKHOUSE_PASSWORD"
+      },
       "options": {
         "host": "clickhouse",
         "port": 8123,
@@ -29,7 +51,10 @@
       "name": "lake",
       "kind": "s3",
       "reference": "MinIO standing in for an S3-compatible store. Browsing only; querying objects needs DuckDB.",
-      "secret": { "from": "env", "name": "S3_SECRET" },
+      "secret": {
+        "from": "env",
+        "name": "S3_SECRET"
+      },
       "options": {
         "endpoint": "minio:9000",
         "region": "us-east-1",
@@ -39,15 +64,53 @@
       }
     },
     {
+      "name": "bus",
+      "kind": "kafka",
+      "reference": "Disposable Redpanda for the end-to-end run. One topic per compression codec.",
+      "options": {
+        "brokers": "kafka:9092",
+        "sampleMessages": 2000,
+        "startPosition": "earliest"
+      }
+    },
+    {
+      "name": "bus-sampled",
+      "kind": "kafka",
+      "reference": "The same Redpanda, read with a deliberately small budget, to show a query reads a bounded window.",
+      "options": {
+        "brokers": "kafka:9092",
+        "sampleMessages": 20,
+        "startPosition": "latest"
+      }
+    },
+    {
       "name": "vaulted",
       "kind": "mysql",
       "reference": "The same MySQL, but its password has to come from the encrypted vault.",
-      "secret": { "from": "vault" },
+      "secret": {
+        "from": "vault"
+      },
       "options": {
         "host": "mysql",
         "port": 3306,
         "user": "dbrex",
         "database": "analytics"
+      }
+    },
+    {
+      "name": "risingwave",
+      "kind": "postgres",
+      "reference": "RisingWave over the PostgreSQL wire protocol. Only reachable under the risingwave compose profile.",
+      "secret": {
+        "from": "env",
+        "name": "POSTGRES_PASSWORD"
+      },
+      "options": {
+        "host": "risingwave",
+        "port": 4566,
+        "user": "root",
+        "database": "dev",
+        "sslmode": "disable"
       }
     }
   ]

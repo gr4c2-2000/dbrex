@@ -73,3 +73,33 @@ export function statementAt(statements: readonly Statement[], offset: number): S
   }
   return previous ?? statements[0];
 }
+
+/**
+ * Is there code after the last statement terminator?
+ *
+ * Asked before dropping a block of SQL into a file. A `;` is the only thing
+ * that ends a statement — a blank line does not, and neither does a comment —
+ * so text that ends mid-statement will swallow whatever is appended to it,
+ * directives included. The appended block then runs on the connection the
+ * statement above it named, against an engine that has never heard of it.
+ *
+ * This is the same condition `splitSql` tracks to decide whether a trailing
+ * chunk is a statement at all, asked directly rather than inferred from the
+ * shape of its output.
+ */
+export function endsOpenStatement(text: string): boolean {
+  let open = false;
+  for (const ev of scanSql(text)) {
+    if (ev.region === 'code' && ev.char === ';') {
+      open = false;
+      continue;
+    }
+    if (!open
+      && ev.region !== 'line-comment'
+      && ev.region !== 'block-comment'
+      && !/\s/.test(ev.char)) {
+      open = true;
+    }
+  }
+  return open;
+}

@@ -273,3 +273,110 @@ describe('configurations written for the previous generation', () => {
     expect(registry().loadProblems().join('\n')).toMatch(/unknown option "shh"/);
   });
 });
+
+describe('connections defined in a file', () => {
+  const inline = {
+    name: 'docker',
+    kind: 'fake',
+    options: { host: '127.0.0.1', port: '3306' },
+    password: 'hunter2',
+  };
+
+  it('coerces directive text to the types the provider declared', () => {
+    const { connection } = registry().define('client-1', inline);
+    expect(connection.spec.options).toEqual({ host: '127.0.0.1', port: 3306 });
+    expect(connection.origin).toBe('inline');
+  });
+
+  it('keeps the password off the spec', () => {
+    const { connection } = registry().define('client-1', inline);
+    expect(connection.password).toBe('hunter2');
+    expect(JSON.stringify(connection.spec)).not.toContain('hunter2');
+  });
+
+  it('substitutes variables, so a file can read the daemon environment', () => {
+    const { connection } = registry().define('client-1', {
+      name: 'docker', kind: 'fake', options: { host: 'db', user: '$env:TOKEN' },
+    });
+    expect(connection.spec.options['user']).toBe('from-env');
+  });
+
+  it('applies the provider defaults', () => {
+    const { connection } = registry().define('client-1', {
+      name: 'docker', kind: 'fake', options: { host: 'db' },
+    });
+    expect(connection.spec.options['port']).toBe(3306);
+  });
+
+  it('reports every bad option at once instead of failing at connect time', () => {
+    expect(() => registry().define('client-1', {
+      name: 'docker', kind: 'fake', options: { nonsense: 'x' },
+    })).toThrow(DbRexError);
+  });
+
+  it('refuses a kind no provider claims', () => {
+    expect(() => registry().define('client-1', { name: 'x', kind: 'oracle', options: {} }))
+      .toThrow(/unknown connection kind/);
+  });
+
+  it('is visible to its own scope and to nothing else', () => {
+    const shared = registry();
+    shared.define('workspace:/repo', inline);
+    expect(shared.find('docker', undefined, 'workspace:/repo').spec.name).toBe('docker');
+    expect(() => shared.find('docker', undefined, 'client:7')).toThrow(/no connection named/);
+  });
+
+  it('shadows a configured connection of the same name for its owner alone', () => {
+    writeGlobal({ connections: [{ name: 'prod', kind: 'fake', host: 'db.example' }] });
+    const shared = registry();
+    shared.define('client-1', { name: 'prod', kind: 'fake', options: { host: 'localhost' } });
+    expect(shared.find('prod', undefined, 'client-1').spec.options['host']).toBe('localhost');
+    expect(shared.find('prod', undefined, 'client-2').spec.options['host']).toBe('db.example');
+  });
+
+  it('reports whether anything actually moved, so an unchanged re-run keeps its session', () => {
+    const shared = registry();
+    expect(shared.define('client-1', inline).changed).toBe(true);
+    expect(shared.define('client-1', inline).changed).toBe(false);
+    expect(shared.define('client-1', { ...inline, options: { host: 'elsewhere' } }).changed).toBe(true);
+  });
+
+  it('notices a changed password even when the host stayed put', () => {
+    const shared = registry();
+    shared.define('client-1', inline);
+    expect(shared.define('client-1', { ...inline, password: 'other' }).changed).toBe(true);
+  });
+
+  it('hands back what it forgot, so the sessions can be closed too', () => {
+    const shared = registry();
+    shared.define('client-1', inline);
+    expect(shared.releaseScope('client-1').map(c => c.spec.name)).toEqual(['docker']);
+    expect(shared.releaseScope('client-1')).toEqual([]);
+    expect(() => shared.find('docker', undefined, 'client-1')).toThrow(/no connection named/);
+  });
+
+  it('survives a reload of the files, which has nothing to do with it', () => {
+    const shared = registry();
+    shared.define('client-1', inline);
+    shared.reloadAll();
+    expect(shared.find('docker', undefined, 'client-1').spec.name).toBe('docker');
+  });
+});
+
+describe('a password that resolves to nothing', () => {
+  it('is a config error, not an authentication failure later on', () => {
+    expect(() => registry().define('client-1', {
+      name: 'docker',
+      kind: 'fake',
+      options: { host: 'db' },
+      password: '$env:NOT_SET_ANYWHERE',
+    })).toThrow(/resolved to nothing/);
+  });
+
+  it('still substitutes one the daemon can see', () => {
+    const { connection } = registry().define('client-1', {
+      name: 'docker', kind: 'fake', options: { host: 'db' }, password: '$env:TOKEN',
+    });
+    expect(connection.password).toBe('from-env');
+  });
+});

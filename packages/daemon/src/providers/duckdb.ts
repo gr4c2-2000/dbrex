@@ -89,8 +89,10 @@ export async function loadDuckDB(location: DuckDBLocation): Promise<DuckDBModule
     }
   }
 
-  throw new DbRexError('config', 'DuckDB is not installed, so object-store queries cannot run', {
-    hint: 'run `dbrex install-duckdb` once (about 70 MB); browsing buckets works without it',
+  // Two providers run their statements through DuckDB now, so the message says
+  // what cannot happen rather than naming one of them.
+  throw new DbRexError('config', 'DuckDB is not installed, so this connection cannot run a query', {
+    hint: 'run `dbrex install-duckdb` once (about 70 MB); browsing works without it',
     retryable: true,
   }, new Error(attempts.join('; ')));
 }

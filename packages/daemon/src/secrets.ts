@@ -32,6 +32,12 @@ export class SecretResolver {
 
   /** The stored value, or undefined. Never prompts a human. */
   async lookup(connection: RegisteredConnection, purpose: SecretPurpose): Promise<string | undefined> {
+    // A password written into the .sql file the query came from. It was never
+    // stored, so there is nothing to look up and no vault to unlock first.
+    if (purpose.kind === 'password' && connection.password !== undefined) {
+      return connection.password;
+    }
+
     const source = connection.spec.secret?.from ?? 'prompt';
 
     switch (source) {
@@ -96,6 +102,11 @@ export class SecretResolver {
 
   /** Persist a value: one a human typed, or one a provider obtained itself. */
   async remember(connection: RegisteredConnection, purpose: SecretPurpose, value: string): Promise<void> {
+    // An inline connection exists for as long as the file is being worked on.
+    // Putting its password in the vault would outlive the container it belongs
+    // to and leave a slot nothing will ever read again.
+    if (connection.origin === 'inline') return;
+
     const source = connection.spec.secret?.from ?? 'prompt';
     // A connection that reads from a command or the environment has an owner
     // outside DbRex. Writing a copy into the vault would create a second source

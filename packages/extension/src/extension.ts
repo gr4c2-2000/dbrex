@@ -105,12 +105,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // there, and pasted mid-line it would quietly stop being one.
     const at = editor.selection.start;
     const line = editor.document.lineAt(at.line);
-    const { text: block } = placeBlock(
+    const { text: block, terminated } = placeBlock(
       text,
       at.character,
       line.text.slice(editor.selection.end.character),
+      editor.document.getText(new vscode.Range(new vscode.Position(0, 0), at)),
     );
     await editor.edit(edit => edit.replace(editor.selection, block));
+    if (terminated) {
+      // Said out loud, because it edited SQL the user wrote rather than only
+      // adding what was asked for.
+      void vscode.window.showInformationMessage(
+        'DbRex: closed the statement above with a ; so this block runs on its own connection.',
+      );
+    }
     await vscode.window.showTextDocument(editor.document, editor.viewColumn);
   };
   context.subscriptions.push({ dispose: () => panel.dispose() });
@@ -119,6 +127,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const diagnostics = new Diagnostics(
     connect,
+    schema,
     () => session.activeName,
     name => session.info(name)?.capabilities.validate === true,
   );

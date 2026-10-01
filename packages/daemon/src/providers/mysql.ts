@@ -34,6 +34,7 @@ import {
   type QueryStats,
   type Session,
 } from '@dbrex/core';
+import { armInterrupt, type Interruption } from './interrupt';
 
 /**
  * Rows per chunk. Large enough that the per-chunk await does not dominate a
@@ -238,38 +239,6 @@ export function mysqlError(e: unknown, connection: string): DbRexError {
     ...(hint === undefined ? {} : { hint }),
     retryable: code === 'network',
   });
-}
-
-type Interruption = 'cancelled' | 'timeout';
-
-/**
- * Abort and deadline in one place. The reason has to be remembered: once the
- * socket is destroyed the driver reports a lost connection, and reporting a
- * cancelled query as a network failure is exactly the confusion the error
- * taxonomy exists to end.
- */
-function armInterrupt(
-  options: QueryOptions | undefined,
-  interrupt: () => void,
-): { reason: () => Interruption | undefined; disarm: () => void } {
-  let reason: Interruption | undefined;
-  const fire = (r: Interruption): void => {
-    if (reason !== undefined) return;
-    reason = r;
-    interrupt();
-  };
-  const onAbort = (): void => fire('cancelled');
-  const signal = options?.signal;
-  const timer = options?.timeoutMs === undefined ? undefined : setTimeout(() => fire('timeout'), options.timeoutMs);
-  signal?.addEventListener('abort', onAbort, { once: true });
-  if (signal?.aborted) fire('cancelled');
-  return {
-    reason: () => reason,
-    disarm: () => {
-      if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-    },
-  };
 }
 
 class MysqlSession implements Session {

@@ -23,6 +23,39 @@ services:
       timeout: 5s
       retries: 30
 
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: rootpw
+      POSTGRES_DB: analytics
+      POSTGRES_USER: dbrex
+    volumes:
+      - ./seed/postgres.sql:/docker-entrypoint-initdb.d/00-seed.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dbrex", "-d", "analytics"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # RisingWave shares the postgres provider, and this is where that claim is
+  # checked rather than assumed. Behind a profile because the image is 11 GB:
+  # `make verify` must stay something a new contributor can afford to run.
+  #
+  #   make verify-risingwave
+  #
+  # It seeds itself through dbrex, since the image ships no psql.
+  risingwave:
+    image: risingwavelabs/risingwave:latest
+    profiles: [risingwave]
+    command: single_node
+    healthcheck:
+      # No psql and no curl in the image; the frontend port answering is the
+      # only signal available from inside it.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/4566"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     environment:
@@ -39,6 +72,50 @@ services:
       interval: 3s
       timeout: 5s
       retries: 30
+
+  # Redpanda rather than Kafka proper: one container, no ZooKeeper, no KRaft
+  # ceremony, and the same wire protocol. What is being tested is our reader.
+  kafka:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://kafka:9092
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # Topics and messages, one topic per compression codec. KafkaJS implements
+  # none of snappy, lz4 or zstd, so a reader without its own codecs lists these
+  # topics and then fails on every message in them — which is the bug this seed
+  # exists to catch.
+  kafka-seed:
+    image: redpandadata/redpanda:latest
+    depends_on:
+      kafka: { condition: service_healthy }
+    entrypoint: >
+      bash -c "
+      export RPK_BROKERS=kafka:9092 &&
+      rpk topic create events -p 3 &&
+      rpk topic create empty-topic &&
+      for i in $$(seq 1 300); do
+        echo '{\"day\":\"2026-09-16\",\"kind\":\"click\",\"hits\":'$$i',\"note\":null}';
+      done | rpk topic produce events --compression snappy --format '%v\n' &&
+      for codec in none gzip snappy lz4 zstd; do
+        rpk topic create c-$$codec &&
+        printf '{\"hits\":1}\n{\"hits\":2}\n' | rpk topic produce c-$$codec --compression $$codec --format '%v\n';
+      done &&
+      printf 'not json at all\n' | rpk topic produce events --format '%v\n'
+      "
 
   minio:
     image: quay.io/minio/minio:latest
@@ -74,11 +151,14 @@ services:
       dockerfile: Dockerfile
     depends_on:
       mysql: { condition: service_healthy }
+      postgres: { condition: service_healthy }
       clickhouse: { condition: service_healthy }
       minio-seed: { condition: service_completed_successfully }
+      kafka-seed: { condition: service_completed_successfully }
     environment:
       # How the connections file reaches its passwords without a vault prompt.
       MYSQL_PASSWORD: dbrexpw
+      POSTGRES_PASSWORD: rootpw
       CLICKHOUSE_PASSWORD: dbrexpw
       S3_SECRET: dbrexsecret
       # A home of its own, so the run cannot read a developer's real ~/.dbrex.
@@ -88,6 +168,26 @@ services:
       # run can never write into the working checkout.
       - ../..:/src:ro
     command: ["/opt/dbrex/verify.sh"]
+
+  # The runner again, with RisingWave up and only its checks to run. Separate
+  # service rather than a flag on `runner` so the 11 GB image is pulled by
+  # whoever asked for it and by nobody else.
+  risingwave-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: [risingwave]
+    depends_on:
+      risingwave: { condition: service_healthy }
+    environment:
+      MYSQL_PASSWORD: dbrexpw
+      POSTGRES_PASSWORD: rootpw
+      CLICKHOUSE_PASSWORD: dbrexpw
+      S3_SECRET: dbrexsecret
+      DBREX_HOME: /home/dbrex/.dbrex
+    volumes:
+      - ../..:/src:ro
+    command: ["/opt/dbrex/verify-risingwave.sh"]
 
   # The same world, entered by someone who has nothing yet: no build, no
   # node_modules, no dbrex on PATH. Separate from `runner` because a working
@@ -100,6 +200,7 @@ services:
       mysql: { condition: service_healthy }
     environment:
       MYSQL_PASSWORD: dbrexpw
+      POSTGRES_PASSWORD: rootpw
       CLICKHOUSE_PASSWORD: dbrexpw
       S3_SECRET: dbrexsecret
       DBREX_HOME: /home/dbrex/.dbrex

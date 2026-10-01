@@ -168,6 +168,17 @@ export class Server {
     const drop = (): void => {
       if (!this.clients.delete(id)) return;
       for (const controller of client.running.values()) controller.abort();
+      // Connections defined in this client's files outlive it for as long as
+      // something else in the same workspace can still name them: closing one
+      // window must not take the connection out from under the agent. Once the
+      // last of them is gone, so are the sessions they opened.
+      const scope = inlineScope(client);
+      const shared = [...this.clients.values()].some(c => c.greeted && inlineScope(c) === scope);
+      if (!shared) {
+        for (const released of this.deps.connections.releaseScope(scope)) {
+          void this.deps.sessions.invalidate(released).catch(() => { /* already closed */ });
+        }
+      }
       this.deps.broker.detach(id);
       this.deps.logger.debug('client gone', { client: client.label });
       if (this.clients.size === 0) this.deps.onIdle?.();
@@ -237,6 +248,33 @@ export class Server {
 
       case 'describeProviders':
         return { providers: this.deps.providers.all().map(toProviderInfo) };
+
+      case 'defineConnection': {
+        // The same rule as `setSecret`: a password only ever travels between a
+        // human's own client and the daemon. An agent may still define a
+        // connection — it just cannot supply the credential for it, and the
+        // daemon will ask a window or a terminal when the query runs.
+        if (request.password !== undefined) {
+          this.requireSecretRole(client, 'define a connection with a password');
+        }
+        const { connection, changed } = this.deps.connections.define(inlineScope(client), {
+          name: request.name,
+          kind: request.kind,
+          options: request.options,
+          ...(request.password === undefined ? {} : { password: request.password }),
+        });
+        // Editing the host in the file and running it again must not keep
+        // talking to the old one through a session opened a minute ago.
+        if (changed) await this.deps.sessions.invalidate(connection);
+        this.deps.logger.info('inline connection defined', {
+          connection: connection.spec.name, kind: connection.spec.kind, client: client.label, changed,
+        });
+        // Only to the clients that can actually address it. A list naming a
+        // connection you cannot use is worse than no list — and the agent
+        // working on this repository is exactly who needs to be told.
+        this.announceTo(inlineScope(client));
+        return { connection: this.infoFor(connection) };
+      }
 
       case 'reloadConnections': {
         await this.reload();
@@ -420,7 +458,7 @@ export class Server {
   }
 
   private resolve(client: Client, name: string): RegisteredConnection {
-    return this.deps.connections.find(name, client.workspace);
+    return this.deps.connections.find(name, client.workspace, inlineScope(client));
   }
 
   private requireSecretRole(client: Client, action: string): void {
@@ -431,20 +469,36 @@ export class Server {
   }
 
   private connectionInfo(client: Client): ConnectionInfo[] {
-    return this.deps.connections.visible(client.workspace).map(connection => {
-      const provider = this.deps.sessions.providerFor(connection);
-      const source = connection.spec.secret?.from ?? 'prompt';
-      return {
-        name: connection.spec.name,
-        kind: connection.spec.kind,
-        ...(connection.spec.reference === undefined ? {} : { reference: connection.spec.reference }),
-        origin: connection.origin,
-        secretSource: source,
-        // "Ready" means no human is needed to make the next query work.
-        ready: source !== 'prompt' || this.deps.vault.unlocked,
-        capabilities: provider.capabilities,
-      };
-    });
+    return this.deps.connections
+      .visible(client.workspace, inlineScope(client))
+      .map(connection => this.infoFor(connection));
+  }
+
+  private infoFor(connection: RegisteredConnection): ConnectionInfo {
+    const provider = this.deps.sessions.providerFor(connection);
+    // A connection carrying its own password needs nothing from anyone: no
+    // vault, no prompt, so it is ready even while the vault is locked.
+    const source = connection.password !== undefined
+      ? 'none'
+      : connection.spec.secret?.from ?? 'prompt';
+    return {
+      name: connection.spec.name,
+      kind: connection.spec.kind,
+      ...(connection.spec.reference === undefined ? {} : { reference: connection.spec.reference }),
+      origin: connection.origin,
+      secretSource: source,
+      // "Ready" means no human is needed to make the next query work.
+      ready: source !== 'prompt' || this.deps.vault.unlocked,
+      capabilities: provider.capabilities,
+    };
+  }
+
+  /** Tell everyone sharing a scope that the connections they can see changed. */
+  private announceTo(scope: string): void {
+    for (const client of this.clients.values()) {
+      if (!client.greeted || inlineScope(client) !== scope) continue;
+      client.send({ event: 'connectionsChanged', connections: this.connectionInfo(client) });
+    }
   }
 
   private broadcast(message: DaemonMessage): void {
@@ -452,6 +506,18 @@ export class Server {
       if (client.greeted) client.send(message);
     }
   }
+}
+
+/**
+ * Which pool of file-defined connections a client draws from.
+ *
+ * A workspace is shared on purpose: the editor that read the .sql file, a
+ * terminal in the same repository and an agent working on it are all looking at
+ * the same files, so a connection declared in one of them is theirs too. A
+ * client that speaks for no workspace is alone with its own.
+ */
+function inlineScope(client: Client): string {
+  return client.workspace === undefined ? `client:${client.id}` : `workspace:${client.workspace}`;
 }
 
 function toProviderInfo(provider: Provider): ProviderInfo {

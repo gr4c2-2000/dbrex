@@ -62,6 +62,27 @@ export interface DescribeProviders {
   readonly op: 'describeProviders';
 }
 
+/**
+ * Register a connection a file defined in its own comments.
+ *
+ * Ephemeral by construction: it belongs to the client that sent it, it is
+ * forgotten when that client disconnects, and it is never written anywhere. A
+ * name that already exists is replaced, which is what editing the directives in
+ * a file and running it again has to mean.
+ *
+ * A password may only be sent by a client that could have been asked for one
+ * anyway — the same rule as `setSecret`, for the same reason: an agent that
+ * relays a password has already put it in a transcript.
+ */
+export interface DefineConnection {
+  readonly op: 'defineConnection';
+  readonly name: string;
+  readonly kind: string;
+  /** Raw directive values; the daemon coerces them against the provider's fields. */
+  readonly options: Readonly<Record<string, string>>;
+  readonly password?: string;
+}
+
 export interface RunQuery {
   readonly op: 'query';
   readonly connection: string;
@@ -164,6 +185,7 @@ export type RequestBody =
   | Hello
   | ListConnections
   | DescribeProviders
+  | DefineConnection
   | RunQuery
   | Cancel
   | ReadRows
@@ -191,7 +213,7 @@ export interface ConnectionInfo {
   readonly kind: string;
   readonly reference?: string;
   /** Where this one came from, so "why do I see this?" has an answer. */
-  readonly origin: 'global' | 'workspace';
+  readonly origin: 'global' | 'workspace' | 'inline';
   readonly secretSource: SecretSource['from'] | 'none';
   /** False when the daemon knows it cannot get the secret without a human. */
   readonly ready: boolean;
@@ -241,6 +263,7 @@ export interface ResponseValues {
   hello: { readonly daemonVersion: string; readonly protocol: number };
   listConnections: { readonly connections: readonly ConnectionInfo[] };
   describeProviders: { readonly providers: readonly ProviderInfo[] };
+  defineConnection: { readonly connection: ConnectionInfo };
   query: QueryResponse;
   cancel: Record<string, never>;
   readRows: RowsResponse;

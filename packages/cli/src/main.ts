@@ -16,6 +16,7 @@ import {
   messageOf,
   splitSql,
   type ConnectionInfo,
+  type InlineConnection,
 } from '@dbrex/core';
 import { configDir, daemonPath, socketPath } from './paths';
 import { FORMATS, defaultFormat, isFormat, render, type Format } from './format';
@@ -39,7 +40,9 @@ const USAGE = `dbrex ${VERSION}
   dbrex connections                  list connections and what they are for
   dbrex shell [conn]                 interactive session; Tab completes from the server
   dbrex query <conn> <sql>           run one statement and print the rows
-  dbrex query <conn> -f <file.sql>   run a file, honouring -- @conn / -- @limit
+  dbrex query [conn] -f <file.sql>   run a file, honouring -- @conn / -- @limit
+                                     the name is optional when the file defines
+                                     its own connection with -- @kind / -- @host
   dbrex browse <conn> [path...]      walk the schema tree
   dbrex unlock                       unlock the secret vault for this daemon
   dbrex set-password <conn>          store a password for a connection
@@ -205,10 +208,22 @@ async function run(
       }
 
       case 'query': {
-        const connection = required(args.shift(), 'a connection name');
+        // A file that defines its own connection needs no name on the command
+        // line, so the first argument is only a connection when it is not the
+        // `-f` that says where the SQL is.
+        const connection = args[0] === '-f' ? undefined : args.shift();
         const statements = readStatements(args);
         for (const statement of statements) {
-          await runOne(client, statement.connection ?? connection, statement.sql, format, statement.limit);
+          if (statement.inline !== undefined) {
+            await client.call({ op: 'defineConnection', ...statement.inline });
+          }
+          const on = statement.connection ?? connection;
+          if (on === undefined) {
+            throw new DbRexError('config', 'no connection given', {
+              hint: 'name one: dbrex query <conn> -f file.sql, or declare it in the file with -- @kind',
+            });
+          }
+          await runOne(client, on, statement.sql, format, statement.limit);
         }
         return 0;
       }
@@ -297,6 +312,8 @@ interface CliStatement {
   readonly sql: string;
   readonly connection?: string;
   readonly limit?: number;
+  /** A connection the file declared for itself, to register before running. */
+  readonly inline?: InlineConnection;
 }
 
 /** Statements from the command line or a file, with directives applied. */
@@ -318,6 +335,7 @@ function readStatements(args: string[]): CliStatement[] {
       sql: statement.sql,
       ...(config.connection === undefined ? {} : { connection: config.connection }),
       ...(config.limit === undefined ? {} : { limit: config.limit }),
+      ...(config.inline === undefined ? {} : { inline: config.inline }),
     };
   });
 }

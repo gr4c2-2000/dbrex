@@ -20,16 +20,19 @@ import * as path from 'node:path';
 import {
   DbRexError,
   substituteDeep,
+  substituteVars,
   validateOptions,
   withDefaults,
   type ConnectionSpec,
+  type FieldSpec,
+  type InlineConnection,
   type SecretSource,
   type TunnelSpec,
   type VarContext,
 } from '@dbrex/core';
 import type { ProviderRegistry } from './providers/registry';
 
-export type Origin = 'global' | 'workspace';
+export type Origin = 'global' | 'workspace' | 'inline';
 
 export interface RegisteredConnection {
   readonly spec: ConnectionSpec;
@@ -41,6 +44,14 @@ export interface RegisteredConnection {
    * global one of the same name does not also inherit its password.
    */
   readonly secretScope: string;
+  /**
+   * A password the client read out of a .sql file.
+   *
+   * Only ever set on an inline connection, only ever here: it is not in the
+   * spec, so nothing that serialises a spec can serialise it, and the secret
+   * resolver returns it without touching the vault.
+   */
+  readonly password?: string;
 }
 
 export interface RegistryOptions {
@@ -53,6 +64,16 @@ export interface RegistryOptions {
 export class ConnectionRegistry {
   private global: RegisteredConnection[] = [];
   private byWorkspace = new Map<string, RegisteredConnection[]>();
+  /**
+   * Connections defined in a file's comments, by the scope they belong to.
+   *
+   * A workspace is the natural scope: the editor that read the file, a terminal
+   * in the same repository and an agent working on it are three clients looking
+   * at one set of files, and a connection one of them found in those files is
+   * one they should all be able to name. A client that speaks for no workspace
+   * gets a scope of its own instead — there is nothing to share it with.
+   */
+  private inline = new Map<string, Map<string, RegisteredConnection>>();
   private problems: string[] = [];
 
   constructor(
@@ -89,26 +110,105 @@ export class ConnectionRegistry {
     for (const workspace of [...this.byWorkspace.keys()]) this.loadWorkspace(workspace);
   }
 
-  /** Connections visible to a client speaking for `workspace`, workspace winning by name. */
-  visible(workspace?: string): RegisteredConnection[] {
+  /**
+   * Connections visible to a client, nearest definition winning by name:
+   * global, then workspace, then whatever the client's own files declared.
+   */
+  visible(workspace?: string, scope?: string): RegisteredConnection[] {
     const merged = new Map<string, RegisteredConnection>();
     for (const connection of this.global) merged.set(connection.spec.name, connection);
     if (workspace !== undefined) {
       for (const connection of this.forWorkspace(workspace)) merged.set(connection.spec.name, connection);
     }
+    if (scope !== undefined) {
+      for (const [name, connection] of this.inline.get(scope) ?? []) merged.set(name, connection);
+    }
     return [...merged.values()];
   }
 
-  find(name: string, workspace?: string): RegisteredConnection {
-    const found = this.visible(workspace).find(c => c.spec.name === name);
+  find(name: string, workspace?: string, scope?: string): RegisteredConnection {
+    const found = this.visible(workspace, scope).find(c => c.spec.name === name);
     if (!found) {
-      const known = this.visible(workspace).map(c => c.spec.name);
+      const known = this.visible(workspace, scope).map(c => c.spec.name);
       throw new DbRexError('not_found', `no connection named "${name}"`, {
         connection: name,
         hint: known.length > 0 ? `known connections: ${known.join(', ')}` : 'no connections are configured yet',
       });
     }
     return found;
+  }
+
+  /**
+   * Register a connection a client read out of a .sql file.
+   *
+   * `changed` tells the caller whether anything about it differs from what was
+   * registered under the same name before. A live session was opened against
+   * the old host with the old credentials, so somebody has to close it — but
+   * only when something actually moved, or every keystroke that re-runs the
+   * file would reconnect.
+   */
+  define(scope: string, inline: InlineConnection): { connection: RegisteredConnection; changed: boolean } {
+    const provider = this.providers.get(inline.kind);
+    if (!provider) {
+      throw new DbRexError('config', `unknown connection kind "${inline.kind}"`, {
+        connection: inline.name,
+        hint: `available kinds: ${this.providers.ids().join(', ')}`,
+      });
+    }
+
+    const context = this.varContext();
+    const options = withDefaults(
+      coerce(substituteDeep({ ...inline.options }, context), provider.fields),
+      provider.fields,
+    );
+
+    const problems = validateOptions(options, provider.fields);
+    if (problems.length > 0) {
+      throw new DbRexError('config', `connection "${inline.name}" defined in this file is not usable`, {
+        connection: inline.name,
+        hint: problems.map(p => p.message).join('; '),
+      });
+    }
+
+    const password = inline.password === undefined
+      ? undefined
+      : substituteVars(inline.password, context);
+
+    // `$env:NAME` for a variable the daemon cannot see substitutes to nothing,
+    // and an empty password is one the server rejects with "using password: NO"
+    // — an authentication failure for what is really a missing variable. A
+    // password nobody wants is written by leaving the directive out.
+    if (password !== undefined && password.length === 0) {
+      throw new DbRexError('config', `the password for "${inline.name}" resolved to nothing`, {
+        connection: inline.name,
+        hint: `"${inline.password}" came out empty; the daemon reads its own environment, not the client's`,
+      });
+    }
+
+    const connection: RegisteredConnection = {
+      spec: { name: inline.name, kind: inline.kind, options },
+      origin: 'inline',
+      secretScope: `inline:${scope}`,
+      ...(password === undefined ? {} : { password }),
+    };
+
+    const owned = this.inline.get(scope) ?? new Map<string, RegisteredConnection>();
+    const previous = owned.get(inline.name);
+    owned.set(inline.name, connection);
+    this.inline.set(scope, owned);
+
+    return { connection, changed: !sameConnection(previous, connection) };
+  }
+
+  /**
+   * Forget a scope's inline connections. Returns them, so their sessions can be
+   * closed: the caller is the only one that knows nobody is left to use them.
+   */
+  releaseScope(scope: string): RegisteredConnection[] {
+    const owned = this.inline.get(scope);
+    if (!owned) return [];
+    this.inline.delete(scope);
+    return [...owned.values()];
   }
 
   private forWorkspace(workspace: string): RegisteredConnection[] {
@@ -238,6 +338,42 @@ function isSecretSource(value: unknown): value is SecretSource {
   if (typeof value !== 'object' || value === null) return false;
   const from = (value as { from?: unknown }).from;
   return from === 'command' || from === 'env' || from === 'vault' || from === 'prompt';
+}
+
+/**
+ * Directive values are text; provider fields are typed. Only declared fields
+ * are converted — an undeclared one is left alone so `validateOptions` can
+ * report it as the unknown option it is, rather than as a type error.
+ */
+function coerce(
+  raw: Record<string, string>,
+  fields: readonly FieldSpec[],
+): Record<string, unknown> {
+  const declared = new Map(fields.map(f => [f.name, f]));
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    switch (declared.get(name)?.type) {
+      case 'number': {
+        const n = Number(value);
+        out[name] = Number.isFinite(n) ? n : value;
+        break;
+      }
+      case 'boolean':
+        out[name] = /^(true|yes|on|1)$/i.test(value) ? true
+          : /^(false|no|off|0)$/i.test(value) ? false
+          : value;
+        break;
+      default:
+        out[name] = value;
+    }
+  }
+  return out;
+}
+
+function sameConnection(a: RegisteredConnection | undefined, b: RegisteredConnection): boolean {
+  return a !== undefined
+    && a.password === b.password
+    && JSON.stringify(a.spec) === JSON.stringify(b.spec);
 }
 
 function isTunnel(value: unknown): value is TunnelSpec {

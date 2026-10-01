@@ -12,7 +12,10 @@ import * as net from 'node:net';
 import {
   DbRexError,
   PROTOCOL_VERSION,
+  configAt,
   isEvent,
+  splitSql,
+  statementAt,
   type ClientRole,
   type ConnectionInfo,
   type DaemonMessage,
@@ -303,6 +306,35 @@ export class DbRexClient {
     this.pending.clear();
     if (wasConnected && !this.closed) this.events.onClose?.(error);
   }
+}
+
+/**
+ * The connection a statement should run on, registering one the file defines.
+ *
+ * A file that declares its own connection in comments has to be registered with
+ * the daemon before anything can be addressed to it, and re-registered after
+ * every edit to those comments. Doing that here keeps running a statement,
+ * completing a name in it and checking its syntax on the same connection —
+ * three call sites that would otherwise have to remember separately.
+ *
+ * `undefined` means the caller's own fallback did not exist either and there is
+ * nothing to run against.
+ */
+export async function connectionFor(
+  client: DbRexClient,
+  text: string,
+  offset: number,
+  fallback?: string,
+): Promise<string | undefined> {
+  // Measured from the statement's first character of code, not from the
+  // cursor: a file may address several databases, and a caller sitting in the
+  // comments above a statement is asking about that statement.
+  const statement = statementAt(splitSql(text), offset);
+  const config = configAt(text, statement?.codeStart ?? offset);
+  if (config.inline !== undefined) {
+    await client.call({ op: 'defineConnection', ...config.inline });
+  }
+  return config.connection ?? fallback;
 }
 
 export { ensureDaemon, isListening, type SpawnOptions } from './spawn';

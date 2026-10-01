@@ -19,6 +19,7 @@ import {
   type Provider,
   type ProviderIo,
   type QueryOptions,
+  type ConnectionInfo,
   type QueryStats,
   type Session,
 } from '@dbrex/core';
@@ -613,5 +614,199 @@ describe('an agent working while you watch', () => {
     await new Promise(r => setTimeout(r, 20));
 
     expect(shown).toEqual([]);
+  });
+});
+
+describe('connections a file defines for itself', () => {
+  const inline = {
+    op: 'defineConnection' as const,
+    name: 'docker',
+    kind: 'fake',
+    options: { host: '127.0.0.1', port: '5555' },
+  };
+
+  it('is usable the moment it is defined', async () => {
+    await boot();
+    const client = await connect();
+    const defined = await client.call(inline);
+    expect(defined.connection).toMatchObject({ name: 'docker', origin: 'inline' });
+
+    const result = await client.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 5 });
+    expect(result.rowCount).toBe(5);
+  });
+
+  it('carries its own password, so nothing has to be asked or unlocked', async () => {
+    await boot({ needsPassword: true, accepts: 'from-the-file' });
+    const client = await connect();
+    await client.call({ ...inline, password: 'from-the-file' });
+
+    await expect(client.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 }))
+      .resolves.toMatchObject({ rowCount: 1 });
+    expect(state.passwordsSeen).toEqual(['from-the-file']);
+    // Nothing was stored: a vault is only created when something is written.
+    expect(deps.vault.exists).toBe(false);
+  });
+
+  it('refuses a password from an agent, the same as every other secret', async () => {
+    await boot();
+    const agent = await connect({ role: 'agent', client: 'mcp' });
+    await expect(agent.call({ ...inline, password: 'leaked-into-a-transcript' }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it('still lets an agent define one without a credential', async () => {
+    await boot();
+    const agent = await connect({ role: 'agent', client: 'mcp' });
+    await expect(agent.call(inline)).resolves.toMatchObject({ connection: { name: 'docker' } });
+  });
+
+  it('belongs to the client that defined it and to nobody else', async () => {
+    await boot();
+    const mine = await connect();
+    const theirs = await connect();
+    await mine.call(inline);
+
+    const listed = await theirs.call({ op: 'listConnections' });
+    expect(listed.connections.map(c => c.name)).not.toContain('docker');
+    await expect(theirs.query({ op: 'query', connection: 'docker', sql: 'SELECT 1' }))
+      .rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('reconnects when the file moved the database, and only then', async () => {
+    await boot();
+    const client = await connect();
+    await client.call(inline);
+    await client.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 });
+    expect(state.opened).toBe(1);
+
+    // The same directives again: the session in hand is still the right one.
+    await client.call(inline);
+    await client.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 });
+    expect(state.opened).toBe(1);
+
+    await client.call({ ...inline, options: { host: 'elsewhere', port: '5555' } });
+    await client.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 });
+    expect(state.opened).toBe(2);
+    expect(state.closed).toBe(1);
+  });
+
+  it('goes away with the client that defined it', async () => {
+    await boot();
+    const client = await connect();
+    await client.call(inline);
+    await client.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 });
+
+    client.close();
+    await new Promise(r => setTimeout(r, 50));
+    expect(state.closed).toBe(1);
+
+    const next = await connect();
+    await expect(next.query({ op: 'query', connection: 'docker', sql: 'SELECT 1' }))
+      .rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('reports a bad option as a config error instead of a driver failure', async () => {
+    await boot();
+    const client = await connect();
+    await expect(client.call({ ...inline, options: { host: 'db', nonsense: 'x' } }))
+      .rejects.toMatchObject({ code: 'config' });
+  });
+
+  it('tells the defining client its connection list grew', async () => {
+    await boot();
+    const seen: string[][] = [];
+    const client = await connect({}, {
+      onConnectionsChanged: (connections: readonly ConnectionInfo[]) => {
+        seen.push(connections.map(c => c.name));
+      },
+    });
+    await client.call(inline);
+    expect(seen.at(-1)).toContain('docker');
+  });
+});
+
+describe('a file-defined connection inside a workspace', () => {
+  const inline = {
+    op: 'defineConnection' as const,
+    name: 'docker',
+    kind: 'fake',
+    options: { host: '127.0.0.1', port: '5555' },
+    password: 'from-the-file',
+  };
+
+  it('is the agent\'s too, so "run this file" works without configuring anything', async () => {
+    await boot({ needsPassword: true, accepts: 'from-the-file' });
+    const editor = await connect({ role: 'ui', workspace });
+    const agent = await connect({ role: 'agent', client: 'mcp', workspace });
+
+    await editor.call(inline);
+
+    const listed = await agent.call({ op: 'listConnections' });
+    expect(listed.connections.map(c => c.name)).toContain('docker');
+    await expect(agent.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 }))
+      .resolves.toMatchObject({ rowCount: 1 });
+    // The agent never saw the password and was never asked for one.
+    expect(state.passwordsSeen).toEqual(['from-the-file']);
+  });
+
+  it('is told to everyone who can use it, not only to whoever defined it', async () => {
+    await boot();
+    const seen: string[][] = [];
+    const editor = await connect({ role: 'ui', workspace });
+    await connect({ role: 'agent', client: 'mcp', workspace }, {
+      onConnectionsChanged: (connections: readonly ConnectionInfo[]) => {
+        seen.push(connections.map(c => c.name));
+      },
+    });
+
+    await editor.call(inline);
+    // The event travels on the agent's own socket, so it is not ordered against
+    // the editor's reply; give it a moment to arrive.
+    await new Promise(r => setTimeout(r, 50));
+    expect(seen.at(-1)).toContain('docker');
+  });
+
+  it('stays out of another workspace', async () => {
+    await boot();
+    const mine = await connect({ role: 'ui', workspace });
+    const elsewhere = await connect({ role: 'ui', workspace: home });
+
+    await mine.call(inline);
+    await expect(elsewhere.query({ op: 'query', connection: 'docker', sql: 'SELECT 1' }))
+      .rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('outlives the window that defined it while the agent is still working', async () => {
+    await boot();
+    const editor = await connect({ role: 'ui', workspace });
+    const agent = await connect({ role: 'agent', client: 'mcp', workspace });
+    await editor.call(inline);
+    await agent.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 });
+
+    editor.close();
+    await new Promise(r => setTimeout(r, 50));
+
+    // Still usable, and on the same session: closing a display closed nothing else.
+    await expect(agent.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 }))
+      .resolves.toMatchObject({ rowCount: 1 });
+    expect(state.opened).toBe(1);
+    expect(state.closed).toBe(0);
+  });
+
+  it('is forgotten once the last client for the workspace is gone', async () => {
+    await boot();
+    const editor = await connect({ role: 'ui', workspace });
+    const agent = await connect({ role: 'agent', client: 'mcp', workspace });
+    await editor.call(inline);
+    await agent.query({ op: 'query', connection: 'docker', sql: 'SELECT 1', rowLimit: 1 });
+
+    editor.close();
+    agent.close();
+    await new Promise(r => setTimeout(r, 50));
+    expect(state.closed).toBe(1);
+
+    const next = await connect({ role: 'ui', workspace });
+    await expect(next.query({ op: 'query', connection: 'docker', sql: 'SELECT 1' }))
+      .rejects.toMatchObject({ code: 'not_found' });
   });
 });

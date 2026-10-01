@@ -11,9 +11,16 @@
     "@clickhouse/client": "^1.23.1",
     "@dbrex/core": "0.1.0",
     "@smithy/node-http-handler": "^4.12.1",
-    "mysql2": "^3.24.4"
+    "kafkajs": "^2.2.4",
+    "lz4js": "^0.2.0",
+    "mysql2": "^3.24.4",
+    "pg": "^8.23.1",
+    "pg-cursor": "^2.22.1",
+    "snappyjs": "^0.7.0"
   },
   "devDependencies": {
-    "@dbrex/client": "0.1.0"
+    "@dbrex/client": "0.1.0",
+    "@types/pg": "^8.23.1",
+    "@types/pg-cursor": "^2.7.2"
   }
 }

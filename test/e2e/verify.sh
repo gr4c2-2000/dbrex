@@ -142,9 +142,76 @@ check "table draws a rule under the head" '^-+ '               bash -c "${DBREX[
 # A 300-character value and a wide-character value must not break the layout.
 check "a long value is cut, not wrapped"  '…'                  bash -c "COLUMNS=80 ${DBREX[*]} --format table query mysql \"$SQL\""
 
+say "PostgreSQL"
+check "a SELECT returns rows"            '84210'   "${DBREX[@]}" query postgres "SELECT day, kind, hits FROM events ORDER BY day DESC"
+# The tree starts at schemas, not databases: a session cannot query across
+# databases, so offering the others would list unreachable tables.
+check "browse starts at the schemas"     'public'  "${DBREX[@]}" browse postgres
+check "a schema that is not public shows" 'reporting' "${DBREX[@]}" browse postgres
+check "browse walks to the tables"       'events'  "${DBREX[@]}" browse postgres public
+check "browse walks to the columns"      'hits'    "${DBREX[@]}" browse postgres public events
+# Introspection goes through pg_catalog for exactly this: information_schema
+# does not list materialized views at all.
+check "a materialized view is listed"    'totals'  "${DBREX[@]}" browse postgres reporting
+check "and is marked as materialized"    'materialized view' "${DBREX[@]}" browse postgres reporting
+check "a plain view is told apart"       'daily'   "${DBREX[@]}" browse postgres reporting
+# The identity of the connected database is the server's business, not ours:
+# a wrong `database` must fail as a refusal, not as a silent default.
+check_message "a bad statement names the relation" 'nope' "${DBREX[@]}" query postgres "SELECT * FROM nope"
+refuse "a bad statement exits non-zero"  "${DBREX[@]}" query postgres "SELECT * FROM nope"
+# Values the engine formats better than a JS Date can: a jsonb column and a
+# timestamp arrive as the server wrote them.
+check "a timestamp keeps the server's text" '2026-09-16' "${DBREX[@]}" query postgres "SELECT day FROM events ORDER BY day DESC"
+# More rows than one cursor read, so the chunking is exercised rather than
+# assumed: 1200 > the 500-row chunk. Asserted on what the daemon stored, not on
+# what was printed — the CLI shows at most a thousand rows of any result.
+check "a result larger than one chunk arrives whole" '1200 rows' \
+  bash -c "${DBREX[*]} query postgres \"SELECT g FROM generate_series(1,1200) g\" >/dev/null && ${DBREX[*]} results 1"
+
 say "ClickHouse"
 check "a SELECT returns rows"       '84210'    "${DBREX[@]}" query clickhouse "SELECT day, kind, hits FROM events ORDER BY day DESC"
 check "browse walks the tree"       'events'   "${DBREX[@]}" browse clickhouse analytics
+
+say "Kafka, before DuckDB exists"
+# The split this provider is built around: the tree comes from KafkaJS, which
+# is pure JavaScript, so a cluster explores the moment it is configured. The 70
+# MB native module is still a decision nobody has made.
+check "topics list without DuckDB"       'events'       "${DBREX[@]}" browse bus
+check_message "a query says what is missing" 'install-duckdb' \
+  "${DBREX[@]}" query bus "SELECT count(*) FROM events"
+
+say "Install DuckDB, the way someone who wants to query would"
+check "install-duckdb reports success"   'installed'    "${DBREX[@]}" install-duckdb
+
+say "Kafka"
+# The tree is the feature: a cluster explores like a schema does, and expanding
+# a topic shows its fields rather than a column of bytes.
+check "a topic says how it is spread"    '3 partitions' "${DBREX[@]}" browse bus
+check "expanding a topic shows its fields" 'hits'     "${DBREX[@]}" browse bus events
+check "and the Kafka metadata alongside" '_offset'    "${DBREX[@]}" browse bus events
+# A topic is a table, which is the whole reason the tree can offer a statement
+# anyone can read.
+# 301: three hundred JSON messages and one that is not JSON at all.
+check "a topic queries as a table"       '301'        "${DBREX[@]}" query bus "SELECT count(*) AS n FROM events"
+check "the payload is typed, not a blob" '^42$'       bash -c "${DBREX[*]} --format tsv query bus \"SELECT hits FROM events WHERE hits = 42\" | tail -1"
+check "metadata columns are there to group by" 'partition' \
+  "${DBREX[@]}" query bus "SELECT _partition, count(*) AS n FROM events GROUP BY _partition ORDER BY _partition"
+# KafkaJS implements gzip and nothing else. Without our own codecs these four
+# fail inside its decoder, one error per topic, nowhere near a provider.
+for codec in none gzip snappy lz4 zstd; do
+  check "a $codec-compressed topic reads" '^2$' \
+    bash -c "${DBREX[*]} --format tsv query bus \"SELECT count(*) FROM 'c-$codec'\" | tail -1"
+done
+check "a message that is not JSON keeps its body" 'not json at all' \
+  "${DBREX[@]}" query bus "SELECT message FROM events WHERE message IS NOT NULL"
+check "an empty topic answers instead of failing" '^0$' \
+  bash -c "${DBREX[*]} --format tsv query bus \"SELECT count(*) FROM 'empty-topic'\" | tail -1"
+check_message "a name that is not a topic says so" 'not a topic' \
+  "${DBREX[@]}" query bus "SELECT * FROM nope"
+# A query reads a bounded window and never the whole topic. The assertion is
+# written as SQL so the check does not have to parse a count out of a table.
+check "a small budget bounds what a query reads" 'true' \
+  "${DBREX[@]}" query bus-sampled "SELECT count(*) <= 20 AS within_budget FROM events"
 
 say "Object store"
 check "buckets list without DuckDB" 'analytics' "${DBREX[@]}" browse lake

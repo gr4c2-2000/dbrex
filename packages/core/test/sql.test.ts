@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { splitSql, statementAt } from '../src/sql/split';
+import { endsOpenStatement, splitSql, statementAt } from '../src/sql/split';
 import { applyRowLimit, hasRowLimit, topLevelOnly } from '../src/sql/limit';
-import { configAt, connectionAt, parseDirectives } from '../src/sql/directives';
+import { configAt, parseDirectives, strandedConnection } from '../src/sql/directives';
 
 describe('splitSql', () => {
   it('splits on top-level semicolons and trims', () => {
@@ -178,34 +178,143 @@ describe('directives attached to the statement below them', () => {
   });
 });
 
-describe('connectionAt', () => {
+describe('connections defined in the file', () => {
   const text = [
-    '-- @conn: clickhouse_analytics',
-    'SELECT 1 AS a;',
-    '',
-    '-- @conn: trino_sigma',
-    'SELECT 2 AS b;',
-    '',
-    'SELECT 3 AS c;',
+    '-- @kind: mysql',
+    '-- @host: 127.0.0.1',
+    '-- @port: 3306',
+    '-- @user: root',
+    '-- @password: hunter2',
+    '-- @database: app',
+    'SELECT 1;',
   ].join('\n');
 
-  it('follows the directive above the statement the cursor is in', () => {
-    expect(connectionAt(text, text.indexOf('1 AS a'), 'fallback')).toBe('clickhouse_analytics');
-    expect(connectionAt(text, text.indexOf('2 AS b'), 'fallback')).toBe('trino_sigma');
+  it('collects kind, password and provider options', () => {
+    expect(configAt(text, text.indexOf('SELECT 1')).inline).toEqual({
+      name: 'mysql/127.0.0.1:3306',
+      kind: 'mysql',
+      options: { host: '127.0.0.1', port: '3306', user: 'root', database: 'app' },
+      password: 'hunter2',
+    });
   });
 
-  it('keeps the cascade going for a statement with no directive of its own', () => {
-    expect(connectionAt(text, text.indexOf('3 AS c'), 'fallback')).toBe('trino_sigma');
+  it('names the connection so the rest of the pipeline can address it', () => {
+    expect(configAt(text, text.indexOf('SELECT 1')).connection).toBe('mysql/127.0.0.1:3306');
   });
 
-  it('falls back when the file says nothing', () => {
-    expect(connectionAt('SELECT 1;', 3, 'fallback')).toBe('fallback');
-    expect(connectionAt('SELECT 1;', 3)).toBeUndefined();
+  it('lets @conn name it instead of the derived name', () => {
+    const named = `-- @conn: docker\n${text}`;
+    const config = configAt(named, named.indexOf('SELECT 1'));
+    expect(config.connection).toBe('docker');
+    expect(config.inline?.name).toBe('docker');
   });
 
-  it('resolves from inside the leading comment too, where the cursor often sits', () => {
-    // Typing a directive puts the caret on the comment line; completion asked
-    // from there must still know which database the statement below will use.
-    expect(connectionAt(text, text.indexOf('@conn: trino_sigma'), 'fallback')).toBe('trino_sigma');
+  it('falls back to the kind alone when there is no host', () => {
+    expect(configAt('-- @kind: duck\nSELECT 1', 40).inline?.name).toBe('duck');
+  });
+
+  it('leaves unknown keys alone when no @kind claims them', () => {
+    expect(configAt('-- @note: hi\n-- @host: db\nSELECT 1', 40)).toEqual({});
+  });
+
+  it('keeps a password out of the options bag', () => {
+    const options = configAt(text, text.indexOf('SELECT 1')).inline?.options ?? {};
+    expect(Object.keys(options)).not.toContain('password');
+  });
+
+  it('cascades like every other directive', () => {
+    const two = [
+      '-- @kind: mysql',
+      '-- @host: first',
+      'SELECT 1;',
+      '-- @host: second',
+      'SELECT 2;',
+    ].join('\n');
+    expect(configAt(two, two.indexOf('SELECT 1')).inline?.options).toEqual({ host: 'first' });
+    expect(configAt(two, two.indexOf('SELECT 2')).inline?.options).toEqual({ host: 'second' });
+  });
+});
+
+describe('a statement that was never terminated', () => {
+  it('knows when text ends mid-statement', () => {
+    expect(endsOpenStatement('SELECT 1')).toBe(true);
+    expect(endsOpenStatement('SELECT 1;')).toBe(false);
+  });
+
+  it('is not fooled by trailing whitespace or a blank line', () => {
+    expect(endsOpenStatement('SELECT 1\n\n')).toBe(true);
+    expect(endsOpenStatement('SELECT 1;\n\n')).toBe(false);
+  });
+
+  it('is not fooled by a trailing comment', () => {
+    expect(endsOpenStatement('SELECT 1;\n-- a note\n')).toBe(false);
+    expect(endsOpenStatement('SELECT 1\n-- a note\n')).toBe(true);
+  });
+
+  it('treats comments and whitespace alone as nothing to close', () => {
+    expect(endsOpenStatement('')).toBe(false);
+    expect(endsOpenStatement('-- @conn: ads\n')).toBe(false);
+    expect(endsOpenStatement('   \n\t\n')).toBe(false);
+  });
+
+  it('ignores a semicolon inside a string or a comment', () => {
+    expect(endsOpenStatement("SELECT ';'")).toBe(true);
+    expect(endsOpenStatement('SELECT 1 -- ;\n')).toBe(true);
+  });
+
+  it('reopens after a terminator when more code follows', () => {
+    expect(endsOpenStatement('SELECT 1; SELECT 2')).toBe(true);
+  });
+});
+
+describe('a @conn stranded inside a statement', () => {
+  /**
+   * The case this was written for: a block injected from the schema tree landed
+   * below a statement with no `;`, so the whole file became one statement and
+   * the directive stopped applying. The query went to the previous connection
+   * and came back with a syntax error from an engine it had never named.
+   */
+  const SWALLOWED = [
+    '-- @conn: ads',
+    'SELECT id, name',
+    'FROM users',
+    'WHERE id = 1',
+    '',
+    '-- @conn: commonAZ',
+    'SELECT *',
+    'FROM "dot.i-json-dot"',
+    'LIMIT 100',
+  ].join('\n');
+
+  it('is one statement, which is the whole problem', () => {
+    expect(splitSql(SWALLOWED)).toHaveLength(1);
+  });
+
+  it('still resolves to the connection named at the top', () => {
+    const statement = splitSql(SWALLOWED)[0]!;
+    expect(configAt(SWALLOWED, statement.codeStart).connection).toBe('ads');
+  });
+
+  it('names the connection that was asked for and ignored', () => {
+    const statement = splitSql(SWALLOWED)[0]!;
+    expect(strandedConnection(SWALLOWED, statement)).toBe('commonAZ');
+  });
+
+  it('finds nothing when the directive is where it belongs', () => {
+    const fine = '-- @conn: commonAZ\nSELECT 1';
+    const statement = splitSql(fine)[0]!;
+    expect(strandedConnection(fine, statement)).toBeUndefined();
+    expect(configAt(fine, statement.codeStart).connection).toBe('commonAZ');
+  });
+
+  it('does not reach into the next statement for one', () => {
+    const two = 'SELECT 1;\n-- @conn: other\nSELECT 2';
+    const first = splitSql(two)[0]!;
+    expect(strandedConnection(two, first)).toBeUndefined();
+  });
+
+  it('accepts @dbname, which means the same thing', () => {
+    const text = 'SELECT 1\n-- @dbname: other\nSELECT 2';
+    expect(strandedConnection(text, splitSql(text)[0]!)).toBe('other');
   });
 });

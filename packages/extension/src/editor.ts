@@ -8,8 +8,15 @@
  */
 
 import * as vscode from 'vscode';
-import { configAt, splitSql, statementAt, type Capabilities, type Statement } from '@dbrex/core';
-import type { DbRexClient } from '@dbrex/client';
+import {
+  configAt,
+  splitSql,
+  statementAt,
+  strandedConnection,
+  type Capabilities,
+  type Statement,
+} from '@dbrex/core';
+import { connectionFor, type DbRexClient } from '@dbrex/client';
 import { report } from './daemon';
 import type { ResultsPanel } from './panel';
 import type { Session } from './session';
@@ -119,11 +126,40 @@ export class Runner {
 
     for (const statement of statements) {
       const directives = configAt(text, statement.codeStart);
-      const connection = directives.connection ?? this.session.activeName ?? await this.session.pick();
-      if (connection === undefined) return;
-
       const limit = directives.limit ?? defaultLimit;
       const client = await this.connect();
+
+      // A file that declares its own connection registers it here, before
+      // anything can be addressed to it. A mistake in those directives is a
+      // failure of this statement, so it is reported where its rows would be.
+      let connection: string | undefined;
+      try {
+        connection = await connectionFor(client, text, statement.codeStart, this.session.activeName);
+      } catch (e) {
+        this.panel.reveal();
+        this.panel.failed(e instanceof Error ? e.message : String(e), hintOf(e));
+        report(e, this.output);
+        return;
+      }
+      connection ??= await this.session.pick();
+      if (connection === undefined) return;
+
+      // A `@conn` swallowed into the middle of this statement names a database
+      // this run will not use. Refusing is the point: the alternative is that
+      // the statement goes to whichever connection the window had selected,
+      // which is how a Kafka query ends up being parsed by MySQL. It is also
+      // not always harmless — the same mistake on a write sends it to the
+      // wrong server.
+      const stranded = strandedConnection(text, statement);
+      if (stranded !== undefined && stranded !== connection) {
+        this.panel.reveal();
+        this.panel.failed(
+          `This statement says "-- @conn: ${stranded}" inside itself, so it would run on "${connection}".`,
+          'A statement ends at a ";" and nothing else, so the one above has absorbed this block. '
+          + 'Put a ";" after it.',
+        );
+        return;
+      }
 
       this.panel.reveal();
       this.panel.running(connection, statement.sql);
