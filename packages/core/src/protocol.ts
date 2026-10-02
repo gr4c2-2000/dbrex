@@ -32,6 +32,47 @@ export type ClientRole =
   /** A script. Never asked for anything; missing credentials are a hard error. */
   | 'headless';
 
+/**
+ * Where a query came from.
+ *
+ * Kept with the result because "who ran this" is the first question asked of a
+ * history that several clients write to at once: an agent's exploration and a
+ * person's own work land in the same list, and without this they are
+ * indistinguishable after the fact.
+ *
+ * Derived from the client's role rather than the name it reported, which is
+ * free text. `editor` therefore means any graphical client, which today is
+ * VSCode and its forks.
+ */
+export type ResultOrigin = 'editor' | 'terminal' | 'agent' | 'unknown';
+
+export function originOfRole(role: ClientRole): ResultOrigin {
+  switch (role) {
+    case 'ui': return 'editor';
+    case 'tty': return 'terminal';
+    case 'agent': return 'agent';
+    // A script writes to the same history and is none of the three.
+    case 'headless': return 'unknown';
+  }
+}
+
+/**
+ * A short label for a result's origin.
+ *
+ * One function so the terminal listing and the editor's tree cannot end up
+ * describing the same result with two different words.
+ */
+export function originLabel(origin: ResultOrigin | undefined): string {
+  switch (origin) {
+    case 'editor': return 'vscode';
+    case 'terminal': return 'cmd';
+    case 'agent': return 'mcp';
+    case 'unknown': return 'script';
+    // A result stored before provenance was recorded.
+    case undefined: return '—';
+  }
+}
+
 /** True when this role is allowed to answer a secret prompt. */
 export function canAnswerSecrets(role: ClientRole): boolean {
   return role === 'ui' || role === 'tty';
@@ -56,6 +97,26 @@ export interface Hello {
 
 export interface ListConnections {
   readonly op: 'listConnections';
+}
+
+/** Workspaces the daemon is serving, so a client can offer a choice. */
+export interface ListWorkspaces {
+  readonly op: 'listWorkspaces';
+}
+
+/**
+ * Change which workspace this client speaks for, without reconnecting.
+ *
+ * A client announces a workspace in `hello`, which was enough while the answer
+ * was fixed for the life of a process. An agent over MCP outlives the question:
+ * it is started once and then asked about several checkouts, and restarting the
+ * bridge to look at a different one is not something it can do.
+ *
+ * Omitting `workspace` means "speak for none", which is the global file alone.
+ */
+export interface UseWorkspace {
+  readonly op: 'useWorkspace';
+  readonly workspace?: string;
 }
 
 export interface DescribeProviders {
@@ -184,6 +245,8 @@ export interface SettingsPatch {
 export type RequestBody =
   | Hello
   | ListConnections
+  | ListWorkspaces
+  | UseWorkspace
   | DescribeProviders
   | DefineConnection
   | RunQuery
@@ -220,6 +283,25 @@ export interface ConnectionInfo {
   readonly capabilities: Capabilities;
 }
 
+/**
+ * A workspace the daemon knows about.
+ *
+ * The daemon only learns of a workspace when a client speaks for one, so this
+ * list is what has been used rather than what exists on disk. A client that
+ * knows more — an editor with folders open — is expected to add its own and say
+ * which of them the daemon has not seen.
+ */
+export interface WorkspaceInfo {
+  /** Absolute path of the workspace root. */
+  readonly path: string;
+  /** Connections visible to a client speaking for it, global ones included. */
+  readonly connections: number;
+  /** True for the workspace the asking client currently speaks for. */
+  readonly active: boolean;
+  /** False when its `.dbrex/connections.json` is missing or unreadable. */
+  readonly hasFile: boolean;
+}
+
 export interface ProviderInfo {
   readonly id: string;
   readonly displayName: string;
@@ -232,6 +314,10 @@ export interface ResultSummary {
   readonly connection: string;
   readonly sql: string;
   readonly createdAt: string;
+  /** Absent on a result stored before this was recorded. */
+  readonly origin?: ResultOrigin;
+  /** The client's own name, for the audit trail. Absent on an older result. */
+  readonly client?: string;
   readonly columns: readonly Column[];
   readonly rowCount: number;
   readonly sizeBytes: number;
@@ -262,6 +348,8 @@ export interface VaultState {
 export interface ResponseValues {
   hello: { readonly daemonVersion: string; readonly protocol: number };
   listConnections: { readonly connections: readonly ConnectionInfo[] };
+  listWorkspaces: { readonly workspaces: readonly WorkspaceInfo[] };
+  useWorkspace: { readonly connections: readonly ConnectionInfo[] };
   describeProviders: { readonly providers: readonly ProviderInfo[] };
   defineConnection: { readonly connection: ConnectionInfo };
   query: QueryResponse;

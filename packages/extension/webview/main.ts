@@ -11,7 +11,7 @@
  * reached from.
  */
 
-import type { HostMessage, ViewDefinition, WebviewMessage } from '../src/webviewProtocol';
+import type { HostMessage, Lane, ViewDefinition, WebviewMessage } from '../src/webviewProtocol';
 import { WEBVIEW_PROTOCOL } from '../src/webviewProtocol';
 import { buildSandboxDocument } from '../src/sandboxDocument';
 
@@ -39,20 +39,92 @@ interface State {
   progressRows: number;
 }
 
-const state: State = {
-  columns: [],
-  rowCount: 0,
-  connection: '',
-  sql: '',
-  elapsedMs: 0,
-  truncated: false,
-  views: [],
-  active: 'table',
-  pages: new Map(),
-  requested: new Set(),
-  status: 'idle',
-  progressRows: 0,
-};
+function freshState(): State {
+  return {
+    columns: [],
+    rowCount: 0,
+    connection: '',
+    sql: '',
+    elapsedMs: 0,
+    truncated: false,
+    views: [],
+    active: 'table',
+    pages: new Map(),
+    requested: new Set(),
+    status: 'idle',
+    progressRows: 0,
+  };
+}
+
+/**
+ * One state per lane.
+ *
+ * An agent and a person share this panel. They used to share one state, so an
+ * agent walking a schema replaced whatever was on screen, repeatedly. Each lane
+ * now keeps its own result, its own paging and its own active view, and only
+ * the lane being looked at is rendered.
+ */
+const lanes: Record<Lane, State> = { user: freshState(), agent: freshState() };
+let shown: Lane = 'user';
+
+/** The lane currently on screen. Reassigned when the tab changes. */
+let state: State = lanes[shown];
+
+/**
+ * A lane that has received something while it was not on screen.
+ *
+ * Marked rather than switched to. Being dragged to an agent's result mid-read is
+ * the behaviour this whole split exists to remove, so the lane says it has
+ * something and waits.
+ */
+const unread: Record<Lane, boolean> = { user: false, agent: false };
+
+function showLane(lane: Lane): void {
+  shown = lane;
+  state = lanes[lane];
+  unread[lane] = false;
+  render();
+}
+
+let laneBarEl: HTMLElement | undefined;
+
+/**
+ * The lane tabs.
+ *
+ * Hidden until an agent has actually run something: a person working alone has
+ * no second lane to choose between, and a tab bar for it would be furniture.
+ */
+function laneBar(): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'bar';
+  laneBarEl = el;
+  if (lanes.agent.status === 'idle') {
+    el.hidden = true;
+    return el;
+  }
+
+  const tab = (lane: Lane, label: string): HTMLButtonElement => {
+    const button = document.createElement('button');
+    button.className = 'secondary';
+    button.textContent = unread[lane] ? `${label} ●` : label;
+    button.setAttribute('aria-pressed', String(shown === lane));
+    button.addEventListener('click', () => showLane(lane));
+    return button;
+  };
+
+  el.append(tab('user', 'Mine'), tab('agent', 'Agent'));
+  return el;
+}
+
+/** Redraw only the lane tabs, leaving the shown lane's scroll position alone. */
+function renderTabs(): void {
+  const previous = laneBarEl;
+  if (previous === undefined) {
+    render();
+    return;
+  }
+  previous.replaceWith(laneBar());
+}
 
 const app = document.getElementById('app')!;
 const bootstrap = JSON.parse(
@@ -101,44 +173,69 @@ window.addEventListener('message', event => apply(event.data as HostMessage));
 vscode.postMessage({ type: 'ready', protocol: WEBVIEW_PROTOCOL });
 
 function apply(message: HostMessage): void {
+  if (message.type === 'hello') return;
+
+  // Written to the lane the message names, drawn only if that is the one on
+  // screen: an agent's query must not pull the view away from what is being
+  // read, and must not be lost either.
+  const target = lanes[message.lane];
+
+  // Anything in the user's lane was caused by the user, so that is where they
+  // are looking: switch to it. Nothing switches to the agent's lane — being
+  // pulled there mid-read is what this split exists to prevent.
+  if (message.lane === 'user' && shown !== 'user') {
+    shown = 'user';
+    state = lanes.user;
+    unread.user = false;
+  }
+
+  const visible = message.lane === shown;
+  if (!visible) unread[message.lane] = true;
+
   switch (message.type) {
-    case 'hello':
-      return;
     case 'running':
-      state.status = 'running';
-      state.connection = message.connection;
-      state.sql = message.sql;
-      state.progressRows = 0;
-      render();
+      target.status = 'running';
+      target.connection = message.connection;
+      target.sql = message.sql;
+      target.progressRows = 0;
+      if (visible) render();
+      else renderTabs();
       return;
     case 'progress':
-      state.progressRows = message.rows;
-      updateBar();
+      target.progressRows = message.rows;
+      if (visible) updateBar();
       return;
     case 'failed':
-      state.status = 'failed';
-      state.message = message.message;
-      state.hint = message.hint;
-      render();
+      target.status = 'failed';
+      target.message = message.message;
+      target.hint = message.hint;
+      if (visible) render();
+      else renderTabs();
       return;
     case 'result':
-      state.status = 'ready';
-      state.columns = message.columns;
-      state.rowCount = message.rowCount;
-      state.connection = message.connection;
-      state.sql = message.sql;
-      state.elapsedMs = message.stats.elapsedMs;
-      state.truncated = message.stats.truncated;
-      state.views = message.views;
-      state.pages = new Map();
-      state.requested = new Set();
-      if (state.active !== 'table' && !message.views.some(v => v.name === state.active)) {
-        state.active = 'table';
+      target.status = 'ready';
+      target.columns = message.columns;
+      target.rowCount = message.rowCount;
+      target.connection = message.connection;
+      target.sql = message.sql;
+      target.elapsedMs = message.stats.elapsedMs;
+      target.truncated = message.stats.truncated;
+      target.views = message.views;
+      target.pages = new Map();
+      target.requested = new Set();
+      if (target.active !== 'table' && !message.views.some(v => v.name === target.active)) {
+        target.active = 'table';
       }
-      render();
+      if (message.defaultView !== undefined
+        && message.views.some(v => v.name === message.defaultView)) {
+        target.active = message.defaultView;
+      }
+      if (visible) render();
+      else renderTabs();
       return;
     case 'rows': {
-      state.pages.set(Math.floor(message.offset / PAGE), message.rows);
+      target.pages.set(Math.floor(message.offset / PAGE), message.rows);
+      if (!visible) return;
       if (state.active === 'table') paintRows();
       else renderView();
       return;
@@ -154,7 +251,7 @@ let topPad: HTMLTableRowElement | undefined;
 let bottomPad: HTMLTableRowElement | undefined;
 
 function render(): void {
-  app.replaceChildren(bar(), body());
+  app.replaceChildren(laneBar(), bar(), body());
   if (state.active === 'table') paintRows();
   else renderView();
 }
@@ -325,7 +422,7 @@ function request(first: number, last: number): void {
   for (let page = Math.floor(first / PAGE); page <= Math.floor(Math.max(first, last - 1) / PAGE); page++) {
     if (state.pages.has(page) || state.requested.has(page)) continue;
     state.requested.add(page);
-    vscode.postMessage({ type: 'requestRows', offset: page * PAGE, limit: PAGE });
+    vscode.postMessage({ type: 'requestRows', lane: shown, offset: page * PAGE, limit: PAGE });
   }
 }
 
@@ -349,7 +446,7 @@ function renderView(): void {
   if (rows === undefined) {
     if (!state.requested.has(0)) {
       state.requested.add(0);
-      vscode.postMessage({ type: 'requestRows', offset: 0, limit: PAGE });
+      vscode.postMessage({ type: 'requestRows', lane: shown, offset: 0, limit: PAGE });
     }
     host.replaceChildren(message('Loading…'));
     return;

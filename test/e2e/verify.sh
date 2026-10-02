@@ -336,6 +336,15 @@ node -e '
 check_eventually "a connection added to the file shows up" 'added-later' "${DBREX[@]}" connections
 check "the connection added at runtime queries" '1' "${DBREX[@]}" query added-later "SELECT 1"
 
+say "History says where a query came from"
+# An agent's exploration and a person's own work land in the same list. Without
+# this they are indistinguishable once the query has finished.
+check "a terminal query is marked cmd" 'cmd' "${DBREX[@]}" results
+# grep -E has no negative lookahead, so the absence is checked by a command that
+# reports it rather than by a pattern that cannot express it.
+check "no origin prints as undefined" '^clean$' \
+  bash -c "${DBREX[*]} results | grep -q undefined && echo dirty || echo clean"
+
 say "Results are kept"
 check "results lists what ran" 'mysql' "${DBREX[@]}" results
 

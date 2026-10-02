@@ -155,6 +155,58 @@ export async function runMcpBridge(options: BridgeOptions): Promise<void> {
           ].filter(Boolean).join('\n'))
           .join('\n');
 
+  server.registerTool('list_workspaces', {
+    title: 'List workspaces',
+    description:
+      'Workspaces the daemon is serving, with how many connections each one ' +
+      'can reach and which is currently in effect. A workspace scopes which ' +
+      'connections exist, so the wrong one means the right connection is ' +
+      'missing rather than failing. Present this list to the user and let them ' +
+      'choose; do not pick for them.',
+  }, async () => {
+    const { workspaces } = await client.call({ op: 'listWorkspaces' });
+    const text = workspaces.length === 0
+      ? 'No workspace is in effect; only the global connections file applies.'
+      : workspaces
+        .map(w => [
+          w.active ? '*' : ' ',
+          w.path,
+          `${w.connections} connection${w.connections === 1 ? '' : 's'}`,
+          w.hasFile ? '' : '(no .dbrex/connections.json of its own)',
+        ].filter(Boolean).join('  '))
+        .join('\n');
+    return {
+      content: [{ type: 'text', text }],
+      structuredContent: { workspaces },
+    };
+  });
+
+  server.registerTool('use_workspace', {
+    title: 'Speak for a workspace',
+    description:
+      'Point this session at a workspace, which changes who "list_connections" ' +
+      'answers with. Takes effect immediately and needs no restart. Ask the ' +
+      'user which one before calling this: the choice decides which databases ' +
+      'are reachable, and switching it silently is how a query ends up running ' +
+      'against the wrong environment.',
+    inputSchema: {
+      workspace: z.string().optional()
+        .describe('Absolute path from list_workspaces. Omit to speak for none, leaving only the global file'),
+    },
+  }, async ({ workspace }) => {
+    const { connections } = await client.call({
+      op: 'useWorkspace',
+      ...(workspace === undefined ? {} : { workspace }),
+    });
+    return {
+      content: [{
+        type: 'text',
+        text: `Now speaking for ${workspace ?? 'no workspace'}.\n\n${describe(connections)}`,
+      }],
+      structuredContent: { connections },
+    };
+  });
+
   server.registerTool('list_connections', {
     title: 'List database connections',
     description:

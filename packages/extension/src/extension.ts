@@ -13,13 +13,15 @@
 
 import * as vscode from 'vscode';
 import { configDirFor, type ConnectionInfo, type ResultSummary } from '@dbrex/core';
-import { Daemon, report, socketEnvironment, workspacePath } from './daemon';
+import { Daemon, activeWorkspace, report, setActiveWorkspace, socketEnvironment } from './daemon';
 import { Runner } from './editor';
 import { Diagnostics, Schema, registerCompletion } from './lsp';
 import { ResultsPanel } from './panel';
 import { Session } from './session';
 import { ResultsTree, SchemaTree } from './trees';
 import { registerFind } from './find';
+import type { Lane } from './webviewProtocol';
+import { pickWorkspace } from './workspacePicker';
 import { placeBlock } from './insert';
 import { addConnection, editConnectionOption } from './wizard';
 
@@ -35,8 +37,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const explorer = new SchemaTree(connect, output);
   const results = new ResultsTree(connect, output);
 
-  const openStoredResult = (summary: ResultSummary): void => {
-    panel.reveal(false);
+  const openStoredResult = (summary: ResultSummary, lane: Lane = 'user'): void => {
+    // An agent's result takes focus from nobody: it goes to its own lane and the
+    // tab says there is something there.
+    panel.reveal(lane === 'agent');
     panel.show({
       resultId: summary.resultId,
       connection: summary.connection,
@@ -45,7 +49,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       rowCount: summary.rowCount,
       stats: { elapsedMs: 0, truncated: summary.truncated },
       views: [],
-    });
+    }, lane);
   };
 
   const daemon = new Daemon(context, output, {
@@ -53,7 +57,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     onResultsChanged: () => results.refresh(),
     onShowResult: summary => {
       output.info(`agent asked to show result ${summary.resultId}`);
-      openStoredResult(summary);
+      openStoredResult(summary, 'agent');
     },
   });
   context.subscriptions.push({ dispose: () => daemon.dispose() });
@@ -236,6 +240,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.window.showInformationMessage('DbRex: vault unlocked.');
   });
 
+  command('dbrex.selectWorkspace', async () => {
+    const client = await connect();
+    const folders = (vscode.workspace.workspaceFolders ?? []).map(f => f.uri.fsPath);
+    const picked = await pickWorkspace(client, folders, activeWorkspace());
+    // `null` is a cancelled picker; `undefined` is a deliberate "no workspace".
+    if (picked === null) return;
+
+    setActiveWorkspace(picked);
+    schema.invalidate();
+    const { connections } = await client.call({ op: 'listConnections' });
+    applyConnections(connections);
+    void vscode.window.showInformationMessage(
+      `DbRex: now ${picked === undefined ? 'using no workspace' : `in ${picked}`}`
+      + ` — ${connections.length} connection(s).`,
+    );
+  });
+
   command('dbrex.reload', async () => {
     const client = await connect();
     const { connections } = await client.call({ op: 'reloadConnections' });
@@ -335,7 +356,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await pushSettings();
     const { connections } = await client.call({ op: 'listConnections' });
     applyConnections(connections);
-    output.info(`ready: ${connections.length} connection(s), workspace ${workspacePath() ?? 'none'}`);
+    output.info(`ready: ${connections.length} connection(s), workspace ${activeWorkspace() ?? 'none'}`);
   } catch (e) {
     report(e, output);
   }

@@ -142,6 +142,50 @@ works. Requires Docker; everything they start is thrown away afterwards.
 make verify
 ```
 
+## Workspaces
+
+A workspace decides which connections exist. The wrong one does not fail — it
+makes the right connection *missing*, which reads as though DbRex lost a
+database.
+
+**DbRex: Select Workspace** offers the folders this window has open together
+with the workspaces the daemon is already serving for other windows and agents,
+and says how many connections each one reaches. The choice applies at once and
+survives the daemon idling out; it is deliberately not remembered across a
+window reload, because which environment a window points at should not come back
+unasked.
+
+An agent gets the same choice through `list_workspaces` and `use_workspace`, so
+one MCP bridge can be pointed at a different checkout mid-session instead of
+being restarted. `.claude/skills/dbrex/SKILL.md` tells it to ask rather than
+assume.
+
+## Two lanes in the results panel
+
+An agent and a person share one results panel. They no longer share one slot:
+the panel has a **Mine** and an **Agent** tab, and a query one of them runs
+cannot replace what the other is reading. A result arriving in the lane you are
+not looking at marks its tab rather than pulling you to it. Running a query
+yourself does switch to your own lane, because that is what you just asked to
+see.
+
+The tabs stay hidden until an agent has actually run something.
+
+## Where a result came from
+
+Every stored result records which kind of client ran it, so one history written
+by three clients stays legible:
+
+```bash
+$ dbrex results
+8f2a…  pin  mcp     1 203 rows  prod  SELECT day, count(*) FROM events …
+41b9…       vscode     18 rows  prod  SELECT * FROM users WHERE id = 1
+c7d0…       cmd           1 row  prod  SELECT version()
+```
+
+The same label appears in the Results view in the editor, with the client's own
+name in the tooltip.
+
 ## Configuration
 
 Connections live in `~/.dbrex/connections.json`, or in a workspace's own

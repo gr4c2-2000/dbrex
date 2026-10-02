@@ -21,7 +21,13 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import type { Column, QueryStats } from '@dbrex/core';
-import { WEBVIEW_PROTOCOL, type HostMessage, type ViewDefinition, type WebviewMessage } from './webviewProtocol';
+import {
+  WEBVIEW_PROTOCOL,
+  type HostMessage,
+  type Lane,
+  type ViewDefinition,
+  type WebviewMessage,
+} from './webviewProtocol';
 
 export interface PanelHandlers {
   requestRows(resultId: string, offset: number, limit: number): Promise<readonly (readonly unknown[])[]>;
@@ -32,7 +38,14 @@ export class ResultsPanel {
   private panel: vscode.WebviewPanel | undefined;
   private ready = false;
   private queued: HostMessage[] = [];
-  private resultId: string | undefined;
+  /**
+   * The result each lane is showing.
+   *
+   * Per lane, because a row request has to be answered from the result the tab
+   * that asked is displaying. One field here meant an agent finishing a query
+   * repointed the paging of whatever the person was scrolling.
+   */
+  private readonly resultIds = new Map<Lane, string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -44,18 +57,18 @@ export class ResultsPanel {
     this.ensure().reveal(vscode.ViewColumn.Beside, preserveFocus);
   }
 
-  running(connection: string, sql: string): void {
+  running(connection: string, sql: string, lane: Lane = 'user'): void {
     this.ensure();
-    this.post({ type: 'running', connection, sql });
+    this.post({ type: 'running', lane, connection, sql });
   }
 
-  progress(rows: number): void {
-    if (this.panel) this.post({ type: 'progress', rows });
+  progress(rows: number, lane: Lane = 'user'): void {
+    if (this.panel) this.post({ type: 'progress', lane, rows });
   }
 
-  failed(message: string, hint?: string): void {
+  failed(message: string, hint?: string, lane: Lane = 'user'): void {
     this.ensure();
-    this.post({ type: 'failed', message, ...(hint === undefined ? {} : { hint }) });
+    this.post({ type: 'failed', lane, message, ...(hint === undefined ? {} : { hint }) });
   }
 
   show(result: {
@@ -67,10 +80,10 @@ export class ResultsPanel {
     stats: QueryStats;
     views: readonly ViewDefinition[];
     defaultView?: string;
-  }): void {
+  }, lane: Lane = 'user'): void {
     this.ensure();
-    this.resultId = result.resultId;
-    this.post({ type: 'result', ...result });
+    this.resultIds.set(lane, result.resultId);
+    this.post({ type: 'result', lane, ...result });
   }
 
   dispose(): void {
@@ -121,9 +134,10 @@ export class ResultsPanel {
         return;
       }
       case 'requestRows': {
-        if (this.resultId === undefined) return;
-        const rows = await this.handlers.requestRows(this.resultId, message.offset, message.limit);
-        this.post({ type: 'rows', offset: message.offset, rows });
+        const resultId = this.resultIds.get(message.lane);
+        if (resultId === undefined) return;
+        const rows = await this.handlers.requestRows(resultId, message.offset, message.limit);
+        this.post({ type: 'rows', lane: message.lane, offset: message.offset, rows });
         return;
       }
       case 'cancel':

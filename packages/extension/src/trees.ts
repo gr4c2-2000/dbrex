@@ -11,7 +11,14 @@
 
 import * as vscode from 'vscode';
 import type { DbRexClient } from '@dbrex/client';
-import { DbRexError, messageOf, type BrowseNode, type ConnectionInfo, type ResultSummary } from '@dbrex/core';
+import {
+  DbRexError,
+  messageOf,
+  originLabel,
+  type BrowseNode,
+  type ConnectionInfo,
+  type ResultSummary,
+} from '@dbrex/core';
 
 /** One line for a tree label: the message, and the hint when there is room. */
 function summarise(error: DbRexError): string {
@@ -187,9 +194,13 @@ export class ResultsTree implements vscode.TreeDataProvider<ResultSummary> {
 
   getTreeItem(summary: ResultSummary): vscode.TreeItem {
     const element = new vscode.TreeItem(oneLine(summary.sql), vscode.TreeItemCollapsibleState.None);
-    element.description = `${summary.rowCount} rows · ${summary.connection}`;
+    // The origin leads, because "did I run this or did the agent" is the first
+    // question asked of a list several clients write to.
+    element.description = `${originLabel(summary.origin)} · ${summary.rowCount} rows · ${summary.connection}`;
     element.tooltip = new vscode.MarkdownString(
-      `\`\`\`sql\n${summary.sql}\n\`\`\`\n\n${summary.createdAt}${summary.truncated ? ' · truncated' : ''}`,
+      `\`\`\`sql\n${summary.sql}\n\`\`\`\n\n${summary.createdAt}`
+      + `${summary.client === undefined ? '' : ` · ${summary.client}`}`
+      + `${summary.truncated ? ' · truncated' : ''}`,
     );
     element.iconPath = new vscode.ThemeIcon(summary.pinned ? 'pinned' : 'output');
     element.contextValue = summary.pinned ? 'dbrex.result.pinned' : 'dbrex.result';

@@ -23,7 +23,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import type { Column, QueryStats } from '@dbrex/core';
+import type { Column, QueryStats, ResultOrigin } from '@dbrex/core';
 import { DbRexError } from '@dbrex/core';
 
 export interface ResultMeta {
@@ -34,6 +34,21 @@ export interface ResultMeta {
   readonly columns: readonly Column[];
   readonly stats: QueryStats;
   readonly rowCount: number;
+  /** Which kind of client ran it. Absent in a result stored before this existed. */
+  readonly origin?: ResultOrigin;
+  /** The client's own name, kept verbatim for the audit trail. */
+  readonly client?: string;
+}
+
+/**
+ * Who ran a query.
+ *
+ * Travels from the server rather than being inferred here: the store never sees
+ * a client, and guessing from the connection or the SQL would be a guess.
+ */
+export interface Provenance {
+  readonly origin: ResultOrigin;
+  readonly client: string;
 }
 
 export interface ResultSummary {
@@ -41,6 +56,8 @@ export interface ResultSummary {
   readonly connection: string;
   readonly sql: string;
   readonly createdAt: string;
+  readonly origin?: ResultOrigin;
+  readonly client?: string;
   /** The shape of the result, so a listing does not need to read a row to know it. */
   readonly columns: readonly Column[];
   readonly rowCount: number;
@@ -100,9 +117,9 @@ export class ResultStore {
   }
 
   /** Open a writer. Rows land in a temporary directory until `finish` publishes them. */
-  begin(connection: string, sql: string): ResultWriter {
+  begin(connection: string, sql: string, by?: Provenance): ResultWriter {
     const resultId = crypto.randomBytes(8).toString('hex');
-    return new ResultWriter(this, resultId, connection, sql, path.join(this.tmpDir, resultId));
+    return new ResultWriter(this, resultId, connection, sql, path.join(this.tmpDir, resultId), by);
   }
 
   list(limit?: number): ResultSummary[] {
@@ -299,6 +316,7 @@ export class ResultWriter {
     private readonly connection: string,
     private readonly sql: string,
     private readonly dir: string,
+    private readonly by?: Provenance,
   ) {
     fs.mkdirSync(dir, { recursive: true });
     this.rows = fs.createWriteStream(path.join(dir, 'rows.ndjson'));
@@ -337,6 +355,7 @@ export class ResultWriter {
       columns,
       stats,
       rowCount: this.count,
+      ...(this.by === undefined ? {} : { origin: this.by.origin, client: this.by.client }),
     };
     await this.close();
     await fs.promises.writeFile(path.join(this.dir, 'meta.json'), JSON.stringify(meta));
@@ -346,6 +365,7 @@ export class ResultWriter {
       connection: this.connection,
       sql: this.sql,
       createdAt: meta.createdAt,
+      ...(this.by === undefined ? {} : { origin: this.by.origin, client: this.by.client }),
       columns,
       rowCount: this.count,
       sizeBytes: this.bytes,

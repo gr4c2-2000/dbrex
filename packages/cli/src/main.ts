@@ -14,6 +14,7 @@ import {
   DbRexError,
   configAt,
   messageOf,
+  originLabel,
   splitSql,
   type ConnectionInfo,
   type InlineConnection,
@@ -177,7 +178,8 @@ async function run(
         const { results } = await client.call({ op: 'listResults', limit });
         for (const r of results) {
           process.stdout.write(
-            `${r.resultId}  ${r.pinned ? 'pin' : '   '}  ${String(r.rowCount).padStart(8)} rows  ` +
+            `${r.resultId}  ${r.pinned ? 'pin' : '   '}  ${originLabel(r.origin).padEnd(6)}  ` +
+            `${String(r.rowCount).padStart(8)} rows  ` +
             `${r.connection}  ${r.sql.replace(/\s+/g, ' ').slice(0, 60)}\n`,
           );
         }

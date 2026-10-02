@@ -810,3 +810,110 @@ describe('a file-defined connection inside a workspace', () => {
       .rejects.toMatchObject({ code: 'not_found' });
   });
 });
+
+describe('workspaces', () => {
+  it('lists none when no client has spoken for one', async () => {
+    await boot();
+    const client = await connect();
+    expect((await client.call({ op: 'listWorkspaces' })).workspaces).toEqual([]);
+  });
+
+  it("includes the asking client's own workspace", async () => {
+    await boot();
+    const client = await connect({ workspace: '/w' });
+    const { workspaces } = await client.call({ op: 'listWorkspaces' });
+    expect(workspaces.map(w => w.path)).toEqual(['/w']);
+    expect(workspaces[0]?.active).toBe(true);
+  });
+
+  it('says when a workspace has no connections file of its own', async () => {
+    await boot();
+    const client = await connect({ workspace: path.join(home, 'nowhere') });
+    expect((await client.call({ op: 'listWorkspaces' })).workspaces[0]?.hasFile).toBe(false);
+  });
+
+  it('says when it does have one', async () => {
+    await boot();
+    const workspace = path.join(home, 'ws');
+    writeConnections(path.join(workspace, '.dbrex'), { connections: [] });
+    const client = await connect({ workspace });
+    expect((await client.call({ op: 'listWorkspaces' })).workspaces[0]?.hasFile).toBe(true);
+  });
+
+  it('changes which workspace a client speaks for without reconnecting', async () => {
+    await boot();
+    const client = await connect();
+
+    await client.call({ op: 'useWorkspace', workspace: '/w' });
+    const { workspaces } = await client.call({ op: 'listWorkspaces' });
+    expect(workspaces.find(w => w.active)?.path).toBe('/w');
+  });
+
+  it('lets a client go back to speaking for none', async () => {
+    await boot();
+    const client = await connect({ workspace: '/w' });
+
+    await client.call({ op: 'useWorkspace' });
+    const { workspaces } = await client.call({ op: 'listWorkspaces' });
+    expect(workspaces.some(w => w.active)).toBe(false);
+  });
+
+  it('keeps "active" per client, so two windows do not see each other as active', async () => {
+    await boot();
+    const a = await connect({ client: 'a', workspace: '/a' });
+    const b = await connect({ client: 'b', role: 'tty', workspace: '/b' });
+
+    // Both workspaces are served; which one is active is a property of who asks.
+    expect((await a.call({ op: 'listWorkspaces' })).workspaces.find(w => w.active)?.path).toBe('/a');
+    expect((await b.call({ op: 'listWorkspaces' })).workspaces.find(w => w.active)?.path).toBe('/b');
+  });
+
+  it('returns the connections the new workspace can reach', async () => {
+    await boot();
+    const workspace = path.join(home, 'ws');
+    writeConnections(path.join(workspace, '.dbrex'), {
+      connections: [{ name: 'only-here', kind: 'fake', host: 'h' }],
+    });
+
+    const client = await connect();
+    const before = await client.call({ op: 'listConnections' });
+    expect(before.connections.map(c => c.name)).not.toContain('only-here');
+
+    const after = await client.call({ op: 'useWorkspace', workspace });
+    expect(after.connections.map(c => c.name)).toContain('only-here');
+  });
+});
+
+describe('where a result came from', () => {
+  it('records the editor when a UI client ran it', async () => {
+    await boot();
+    const client = await connect({ role: 'ui', client: 'vscode/1.2.3' });
+    await client.query({ op: 'query', connection: 'prod', sql: 'SELECT 1' });
+
+    const { results } = await client.call({ op: 'listResults' });
+    expect(results[0]?.origin).toBe('editor');
+    expect(results[0]?.client).toBe('vscode/1.2.3');
+  });
+
+  it('records the agent when MCP ran it', async () => {
+    await boot();
+    const agent = await connect({ role: 'agent', client: 'dbrex-mcp' });
+    await agent.query({ op: 'query', connection: 'prod', sql: 'SELECT 1' });
+
+    const { results } = await agent.call({ op: 'listResults' });
+    expect(results[0]?.origin).toBe('agent');
+  });
+
+  it('records the terminal, and keeps them apart in one history', async () => {
+    await boot();
+    const ui = await connect({ role: 'ui', client: 'vscode' });
+    const tty = await connect({ role: 'tty', client: 'dbrex-cli' });
+
+    await tty.query({ op: 'query', connection: 'prod', sql: 'SELECT 1' });
+    await ui.query({ op: 'query', connection: 'prod', sql: 'SELECT 2' });
+
+    const { results } = await ui.call({ op: 'listResults' });
+    // Newest first, so the editor's query leads and the terminal's follows.
+    expect(results.map(r => r.origin)).toEqual(['editor', 'terminal']);
+  });
+});

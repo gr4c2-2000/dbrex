@@ -84,7 +84,7 @@ export class Daemon {
         socketPath: location.socketPath,
         role: 'ui',
         client: `vscode/${vscode.version}`,
-        ...(workspacePath() === undefined ? {} : { workspace: workspacePath()! }),
+        ...(activeWorkspace() === undefined ? {} : { workspace: activeWorkspace()! }),
       },
       {
         onInteraction: request => this.ask(request),
@@ -192,6 +192,26 @@ export class Daemon {
 
 export function workspacePath(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+/**
+ * The workspace this window speaks for, once someone has chosen one.
+ *
+ * Held here rather than read from the folders each time, because the choice has
+ * to survive a reconnect: the daemon exits when idle, and a window that
+ * re-announced its first folder on the next `hello` would silently undo the
+ * pick. Deliberately not persisted across a reload — which environment a window
+ * is pointed at is the kind of thing that should not come back without being
+ * asked for again.
+ */
+let chosen: { readonly value: string | undefined } | undefined;
+
+export function activeWorkspace(): string | undefined {
+  return chosen === undefined ? workspacePath() : chosen.value;
+}
+
+export function setActiveWorkspace(value: string | undefined): void {
+  chosen = { value };
 }
 
 /** Show a failure the way its code deserves, with the hint the daemon supplied. */

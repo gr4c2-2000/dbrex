@@ -114,6 +114,17 @@ export class ConnectionRegistry {
    * Connections visible to a client, nearest definition winning by name:
    * global, then workspace, then whatever the client's own files declared.
    */
+  /**
+   * Workspaces this registry has loaded.
+   *
+   * What has been used, not what exists: a workspace becomes known when a
+   * client speaks for it. A caller that knows of more — an editor with folders
+   * open — has to contribute them rather than expect them here.
+   */
+  knownWorkspaces(): string[] {
+    return [...this.byWorkspace.keys()].sort();
+  }
+
   visible(workspace?: string, scope?: string): RegisteredConnection[] {
     const merged = new Map<string, RegisteredConnection>();
     for (const connection of this.global) merged.set(connection.spec.name, connection);

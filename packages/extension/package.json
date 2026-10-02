@@ -37,6 +37,10 @@
         "title": "DbRex: Select Active Connection"
       },
       {
+        "command": "dbrex.selectWorkspace",
+        "title": "DbRex: Select Workspace"
+      },
+      {
         "command": "dbrex.addConnection",
         "title": "DbRex: Add Connection"
       },

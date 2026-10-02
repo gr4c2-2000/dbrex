@@ -20,10 +20,12 @@ import {
   DbRexError,
   PROTOCOL_VERSION,
   applyRowLimit,
+  originOfRole,
   isAbortError,
   isInteractionReply,
   type ClientMessage,
   type ConnectionInfo,
+  type WorkspaceInfo,
   type DaemonMessage,
   type Provider,
   type ProviderInfo,
@@ -33,7 +35,7 @@ import {
   type ResultSummary as WireResultSummary,
 } from '@dbrex/core';
 import type { Broker, ClientHandle } from './broker';
-import type { ConnectionRegistry, RegisteredConnection } from './connections';
+import { workspaceFile, type ConnectionRegistry, type RegisteredConnection } from './connections';
 import type { Logger } from './log';
 import type { ProviderRegistry } from './providers/registry';
 import type { SecretResolver } from './secrets';
@@ -243,6 +245,27 @@ export class Server {
         return { daemonVersion: this.deps.version, protocol: PROTOCOL_VERSION };
       }
 
+      case 'listWorkspaces':
+        return { workspaces: this.workspaceInfo(client) };
+
+      case 'useWorkspace': {
+        // Reassigned in place rather than by reconnecting, so an MCP bridge
+        // started once can be pointed at another checkout mid-session.
+        if (request.workspace === undefined) delete (client as { workspace?: string }).workspace;
+        else {
+          Object.assign(client, { workspace: request.workspace });
+          this.deps.onWorkspace?.(request.workspace);
+        }
+        const connections = this.connectionInfo(client);
+        // The client's own view changed, so tell it rather than waiting for the
+        // next file change to do it.
+        client.send({ event: 'connectionsChanged', connections });
+        this.deps.logger.info('client changed workspace', {
+          client: client.label, workspace: request.workspace ?? '(none)',
+        });
+        return { connections };
+      }
+
       case 'listConnections':
         return { connections: this.connectionInfo(client) };
 
@@ -380,7 +403,13 @@ export class Server {
     const controller = new AbortController();
     client.running.set(request.id, controller);
 
-    const writer = this.deps.store.begin(connection.spec.name, request.sql);
+    // Recorded with the result, because an agent's exploration and a person's
+    // own work land in the same history and are otherwise indistinguishable
+    // once the query has finished.
+    const writer = this.deps.store.begin(connection.spec.name, request.sql, {
+      origin: originOfRole(client.role),
+      client: client.label,
+    });
     let columns: ResponseValues['query']['columns'] = [];
     let reported = 0;
 
@@ -466,6 +495,25 @@ export class Server {
     throw new DbRexError('forbidden', `a ${client.role} client may not ${action}`, {
       hint: 'secrets are only accepted from a VSCode window or a terminal, never over MCP',
     });
+  }
+
+  /**
+   * The workspaces on offer, from the asking client's point of view.
+   *
+   * The client's own workspace is included even when the registry has not
+   * loaded it, so a client that has just announced one does not find itself
+   * missing from the list it is about to be shown.
+   */
+  private workspaceInfo(client: Client): WorkspaceInfo[] {
+    const paths = new Set(this.deps.connections.knownWorkspaces());
+    if (client.workspace !== undefined) paths.add(client.workspace);
+
+    return [...paths].sort().map(workspace => ({
+      path: workspace,
+      connections: this.deps.connections.visible(workspace, inlineScope(client)).length,
+      active: workspace === client.workspace,
+      hasFile: fs.existsSync(workspaceFile(workspace)),
+    }));
   }
 
   private connectionInfo(client: Client): ConnectionInfo[] {
