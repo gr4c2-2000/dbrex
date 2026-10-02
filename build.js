@@ -22,6 +22,7 @@ const targets = [
   // The webview and its sandbox are browser code; they must not pull in Node.
   { entryPoints: ['packages/extension/webview/main.ts'], outfile: 'packages/extension/dist/webview.js', platform: 'browser' },
   { entryPoints: ['packages/extension/webview/sandbox.ts'], outfile: 'packages/extension/dist/sandbox.js', platform: 'browser', sourcemap: false },
+  { entryPoints: ['packages/extension/webview/connectionForm.ts'], outfile: 'packages/extension/dist/connectionForm.js', platform: 'browser' },
   // The extension ships the daemon and the CLI so installing it installs everything.
   { entryPoints: ['packages/daemon/src/main.ts'], outfile: 'packages/extension/dist/dbrexd.js' },
   { entryPoints: ['packages/cli/src/main.ts'], outfile: 'packages/extension/dist/dbrex.js' },

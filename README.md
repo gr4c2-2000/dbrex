@@ -162,11 +162,21 @@ A connection declared inside a `.sql` file by its own `-- @kind` directives has
 no entry to edit or delete; the statement that defines it is the place to change
 it, and the view says so rather than failing.
 
-**Add Connection** builds its form from what the daemon says each provider
-accepts, so choosing a kind asks for that engine's own fields and a provider
-added later needs no wizard of its own. It asks where the connection should
-live — `~/.dbrex/connections.json` for just you, or the workspace's
-`.dbrex/connections.json` which you can commit — then opens the file it wrote.
+**Add Connection** opens a form in its own editor tab. Everything is on screen
+at once: the kinds the daemon supports, that engine's own fields, where the file
+goes, and a password box for engines that take one. Nothing is committed until
+Save, and a mistake in one field does not mean starting over.
+
+The fields come from what the daemon says each provider accepts, so a provider
+added later gets a working form with no UI code of its own. Scope is a choice
+between `~/.dbrex/connections.json` and the workspace's own
+`.dbrex/connections.json` — which you can commit — and each option shows the
+path it writes to rather than describing it. A password typed here goes to the
+daemon's vault; the file records only that the credential comes from there.
+
+It replaced a chain of eight sequential pickers. Those could not be reviewed,
+could not be revisited, and a wrong answer on the third question meant answering
+the first two again.
 
 ## Workspaces
 

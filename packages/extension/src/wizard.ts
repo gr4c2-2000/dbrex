@@ -1,76 +1,22 @@
 /**
- * Adding a connection.
+ * Changing and removing a connection, one prompt at a time.
  *
- * The form is generated from what the daemon says each provider accepts. The
- * old wizard hard-coded a list of kinds, a default port per kind and a
- * per-kind chain of `if` statements, which is why S3 connections — added later —
- * could not be created through it at all and had to be written into JSON by
- * hand. Here a provider that declares its fields gets a working wizard for free.
+ * Creating one is a form now (`connectionForm.ts`), because eight sequential
+ * pickers could not be reviewed or revisited. What is left here is the two
+ * operations that genuinely are one question: which setting to change, and
+ * whether to delete.
+ *
+ * The question a change asks is still generated from what the provider declares.
+ * The original wizard hard-coded a list of kinds and a per-kind chain of `if`
+ * statements, which is why S3 — added later — could not be configured through it
+ * at all.
  */
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { DbRexClient } from '@dbrex/client';
-import type { ConnectionInfo, FieldSpec, ProviderInfo } from '@dbrex/core';
-import { appendConnection, removeConnectionEntry, updateConnection } from './connectionsFile';
-
-export async function addConnection(client: DbRexClient, configDir: string): Promise<string | undefined> {
-  const { providers } = await client.call({ op: 'describeProviders' });
-  if (providers.length === 0) {
-    void vscode.window.showErrorMessage('DbRex: the daemon reports no providers.');
-    return undefined;
-  }
-
-  const provider = await pickProvider(providers);
-  if (!provider) return undefined;
-
-  const name = await vscode.window.showInputBox({
-    prompt: 'Name for this connection',
-    placeHolder: 'prod',
-    ignoreFocusOut: true,
-    validateInput: value => (value.trim().length === 0 ? 'a name is required' : undefined),
-  });
-  if (name === undefined) return undefined;
-
-  const options: Record<string, unknown> = {};
-  for (const field of provider.fields) {
-    if (field.prompt === false) continue;
-    const value = await askField(field, provider.displayName);
-    if (value === undefined && field.required === true) return undefined;
-    if (value !== undefined) options[field.name] = value;
-  }
-
-  const reference = await vscode.window.showInputBox({
-    prompt: 'What is this connection for? Shown to the AI before it queries.',
-    placeHolder: 'Production orders. Schema docs: https://…',
-    ignoreFocusOut: true,
-  });
-
-  const where = await vscode.window.showQuickPick(
-    [
-      { label: 'Just for me', description: '~/.dbrex/connections.json', target: 'global' as const },
-      { label: 'This workspace', description: '.dbrex/connections.json — commit it if you like', target: 'workspace' as const },
-    ],
-    { placeHolder: 'Where should this connection live?' },
-  );
-  if (!where) return undefined;
-
-  const file = where.target === 'global'
-    ? path.join(configDir, 'connections.json')
-    : path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? configDir, '.dbrex', 'connections.json');
-
-  appendConnection(file, {
-    name: name.trim(),
-    kind: provider.id,
-    ...(reference && reference.trim().length > 0 ? { reference: reference.trim() } : {}),
-    ...options,
-  });
-
-  await client.call({ op: 'reloadConnections' });
-  const document = await vscode.workspace.openTextDocument(file);
-  await vscode.window.showTextDocument(document, { preview: false });
-  return name.trim();
-}
+import type { ConnectionInfo, FieldSpec } from '@dbrex/core';
+import { removeConnectionEntry, updateConnection } from './connectionsFile';
 
 /**
  * Change one declared option on an existing connection.
@@ -177,27 +123,6 @@ export async function removeConnection(
 
   await client.call({ op: 'reloadConnections' });
   return true;
-}
-
-async function pickProvider(providers: readonly ProviderInfo[]): Promise<ProviderInfo | undefined> {
-  const picked = await vscode.window.showQuickPick(
-    providers.map(provider => ({
-      label: provider.displayName,
-      description: provider.id,
-      detail: summarise(provider),
-      provider,
-    })),
-    { placeHolder: 'What are you connecting to?' },
-  );
-  return picked?.provider;
-}
-
-function summarise(provider: ProviderInfo): string {
-  const parts = [`limit: ${provider.capabilities.limit}`];
-  if (provider.capabilities.browse) parts.push('schema tree');
-  if (provider.capabilities.validate) parts.push('live syntax checking');
-  if (provider.capabilities.cancel !== 'none') parts.push(`cancel: ${provider.capabilities.cancel}`);
-  return parts.join(' · ');
 }
 
 async function askField(field: FieldSpec, provider: string): Promise<unknown> {

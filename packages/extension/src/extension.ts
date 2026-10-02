@@ -23,7 +23,8 @@ import { registerFind } from './find';
 import type { Lane } from './webviewProtocol';
 import { pickWorkspace } from './workspacePicker';
 import { placeBlock } from './insert';
-import { addConnection, editConnectionOption, removeConnection } from './wizard';
+import { ConnectionForm } from './connectionForm';
+import { editConnectionOption, removeConnection } from './wizard';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('DbRex', { log: true });
@@ -211,11 +212,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     explorer.refresh();
   });
 
-  command('dbrex.addConnection', async () => {
-    const client = await connect();
-    const name = await addConnection(client, configDirFor(socketEnvironment()));
-    if (name !== undefined) session.setActive(name);
-  });
+  const connectionForm = new ConnectionForm(
+    context,
+    connect,
+    () => configDirFor(socketEnvironment()),
+    () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    output,
+    async name => {
+      session.setActive(name);
+      schema.invalidate();
+      explorer.refresh();
+      const client = await connect();
+      applyConnections((await client.call({ op: 'listConnections' })).connections);
+    },
+  );
+  context.subscriptions.push({ dispose: () => connectionForm.dispose() });
+
+  command('dbrex.addConnection', () => connectionForm.open());
 
   const setPasswordFor = async (connection: string): Promise<void> => {
     const value = await vscode.window.showInputBox({
