@@ -42,7 +42,8 @@
       },
       {
         "command": "dbrex.addConnection",
-        "title": "DbRex: Add Connection"
+        "title": "DbRex: Add Connection",
+        "icon": "$(add)"
       },
       {
         "command": "dbrex.setPassword",
@@ -71,7 +72,7 @@
       },
       {
         "command": "dbrex.refreshExplorer",
-        "title": "DbRex: Refresh Schema",
+        "title": "DbRex: Refresh Connections",
         "icon": "$(refresh)"
       },
       {
@@ -94,7 +95,8 @@
       },
       {
         "command": "dbrex.editConnection",
-        "title": "DbRex: Change a Connection Setting"
+        "title": "DbRex: Change a Connection Setting",
+        "icon": "$(gear)"
       },
       {
         "command": "dbrex.copyResultSql",
@@ -110,6 +112,16 @@
         "command": "dbrex.insertSelect",
         "title": "DbRex: Insert SELECT For This Item",
         "icon": "$(insert)"
+      },
+      {
+        "command": "dbrex.deleteConnection",
+        "title": "DbRex: Delete Connection",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbrex.setPasswordFor",
+        "title": "DbRex: Add Password",
+        "icon": "$(key)"
       }
     ],
     "keybindings": [
@@ -147,7 +159,7 @@
       "dbrex": [
         {
           "id": "dbrex.explorer",
-          "name": "Schema"
+          "name": "Connections"
         },
         {
           "id": "dbrex.history",
@@ -158,9 +170,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "dbrex.findInSchema",
+          "command": "dbrex.addConnection",
           "when": "view == dbrex.explorer",
           "group": "navigation@0"
+        },
+        {
+          "command": "dbrex.findInSchema",
+          "when": "view == dbrex.explorer",
+          "group": "navigation@1"
         },
         {
           "command": "dbrex.refreshExplorer",
@@ -169,6 +186,21 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "dbrex.setPasswordFor",
+          "when": "view == dbrex.explorer && viewItem == dbrex.connection",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbrex.editConnection",
+          "when": "view == dbrex.explorer && viewItem == dbrex.connection",
+          "group": "inline@2"
+        },
+        {
+          "command": "dbrex.deleteConnection",
+          "when": "view == dbrex.explorer && viewItem == dbrex.connection",
+          "group": "inline@3"
+        },
         {
           "command": "dbrex.useResultSql",
           "when": "view == dbrex.history",
@@ -188,6 +220,16 @@
           "command": "dbrex.deleteResult",
           "when": "view == dbrex.history",
           "group": "inline@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dbrex.setPasswordFor",
+          "when": "false"
+        },
+        {
+          "command": "dbrex.deleteConnection",
+          "when": "true"
         }
       ]
     },

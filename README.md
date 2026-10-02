@@ -142,6 +142,31 @@ works. Requires Docker; everything they start is thrown away afterwards.
 make verify
 ```
 
+## The Connections view
+
+Named for what it holds. It lists connections and expands into whatever each one
+has underneath — databases and tables for a relational engine, buckets and
+objects for a store, topics for Kafka, indices for Elasticsearch. "Schema" was
+accurate for the first two engines and wrong for the rest.
+
+The view's title bar adds a connection, searches, and refreshes. Each connection
+row carries three actions:
+
+- **Add Password** stores a credential in the daemon's vault
+- **Change a Setting** asks the provider which options it accepts and edits the
+  one you choose, in the file the connection came from
+- **Delete Connection** removes the entry, after a confirmation naming the file
+
+A connection declared inside a `.sql` file by its own `-- @kind` directives has
+no entry to edit or delete; the statement that defines it is the place to change
+it, and the view says so rather than failing.
+
+**Add Connection** builds its form from what the daemon says each provider
+accepts, so choosing a kind asks for that engine's own fields and a provider
+added later needs no wizard of its own. It asks where the connection should
+live — `~/.dbrex/connections.json` for just you, or the workspace's
+`.dbrex/connections.json` which you can commit — then opens the file it wrote.
+
 ## Workspaces
 
 A workspace decides which connections exist. The wrong one does not fail — it

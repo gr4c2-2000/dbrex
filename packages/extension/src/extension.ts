@@ -23,7 +23,7 @@ import { registerFind } from './find';
 import type { Lane } from './webviewProtocol';
 import { pickWorkspace } from './workspacePicker';
 import { placeBlock } from './insert';
-import { addConnection, editConnectionOption } from './wizard';
+import { addConnection, editConnectionOption, removeConnection } from './wizard';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('DbRex', { log: true });
@@ -173,13 +173,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (editor) await runner.explain(editor);
   });
 
-  command('dbrex.editConnection', async () => {
-    const name = await session.choose('Change a setting on which connection?');
-    const info = name === undefined ? undefined : session.info(name);
+  /**
+   * The connection a command was invoked on.
+   *
+   * A context menu hands over the tree item it was clicked on; the palette hands
+   * over nothing and has to ask. One resolver, so the two entry points cannot
+   * end up disagreeing about which connection is meant.
+   */
+  const connectionFrom = async (item: unknown, prompt: string): Promise<ConnectionInfo | undefined> => {
+    const fromTree = (item as { connection?: ConnectionInfo } | undefined)?.connection;
+    if (fromTree !== undefined && typeof fromTree.name === 'string') return fromTree;
+    const name = await session.choose(prompt);
+    return name === undefined ? undefined : session.info(name);
+  };
+
+  command('dbrex.editConnection', async (item: never) => {
+    const info = await connectionFrom(item, 'Change a setting on which connection?');
     if (!info) return;
     const client = await connect();
     if (await editConnectionOption(client, info, configDirFor(socketEnvironment()))) {
       void vscode.window.showInformationMessage(`DbRex: "${info.name}" updated.`);
+    }
+  });
+
+  command('dbrex.deleteConnection', async (item: never) => {
+    const info = await connectionFrom(item, 'Delete which connection?');
+    if (!info) return;
+    const client = await connect();
+    if (await removeConnection(client, info, configDirFor(socketEnvironment()))) {
+      void vscode.window.showInformationMessage(`DbRex: "${info.name}" deleted.`);
     }
   });
   command('dbrex.openResults', () => panel.reveal(false));
@@ -217,10 +239,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (connection !== undefined) await setPasswordFor(connection);
   });
 
-  // Not in the palette: it takes a connection name, and the failure node in the
-  // schema tree is what invokes it.
-  command('dbrex.setPasswordFor', async (connection: never) => {
-    if (typeof connection === 'string') await setPasswordFor(connection);
+  // Invoked from the tree: the failure node passes a bare name, a connection row
+  // passes the whole item. Neither is in the palette, which has its own command.
+  command('dbrex.setPasswordFor', async (item: never) => {
+    if (typeof item === 'string') { await setPasswordFor(item); return; }
+    const info = (item as { connection?: ConnectionInfo } | undefined)?.connection;
+    if (info !== undefined) await setPasswordFor(info.name);
   });
 
   command('dbrex.unlockVault', async () => {

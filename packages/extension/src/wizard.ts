@@ -8,11 +8,11 @@
  * hand. Here a provider that declares its fields gets a working wizard for free.
  */
 
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { DbRexClient } from '@dbrex/client';
 import type { ConnectionInfo, FieldSpec, ProviderInfo } from '@dbrex/core';
+import { appendConnection, removeConnectionEntry, updateConnection } from './connectionsFile';
 
 export async function addConnection(client: DbRexClient, configDir: string): Promise<string | undefined> {
   const { providers } = await client.call({ op: 'describeProviders' });
@@ -59,7 +59,7 @@ export async function addConnection(client: DbRexClient, configDir: string): Pro
     ? path.join(configDir, 'connections.json')
     : path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? configDir, '.dbrex', 'connections.json');
 
-  append(file, {
+  appendConnection(file, {
     name: name.trim(),
     kind: provider.id,
     ...(reference && reference.trim().length > 0 ? { reference: reference.trim() } : {}),
@@ -112,7 +112,7 @@ export async function editConnectionOption(
     return false;
   }
 
-  if (!updateEntry(file, connection.name, field.field.name, value)) {
+  if (!updateConnection(file, connection.name, field.field.name, value)) {
     void vscode.window.showErrorMessage(`DbRex: "${connection.name}" is not in ${file}.`);
     return false;
   }
@@ -123,34 +123,59 @@ export async function editConnectionOption(
   return true;
 }
 
+/**
+ * The file an entry lives in, or `undefined` when there is none.
+ *
+ * An inline connection is declared in a `.sql` file by its own directives and
+ * was never written to a connections file, so there is nothing here to edit or
+ * remove — the statement that defines it is.
+ */
 function fileHolding(connection: ConnectionInfo, configDir: string): string | undefined {
+  if (connection.origin === 'inline') return undefined;
   if (connection.origin === 'global') return path.join(configDir, 'connections.json');
   const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   return workspace === undefined ? undefined : path.join(workspace, '.dbrex', 'connections.json');
 }
 
-/** Rewrite one field of one entry, leaving every other byte of the file alone. */
-function updateEntry(file: string, name: string, option: string, value: unknown): boolean {
-  let document: { connections: Record<string, unknown>[] };
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { connections?: unknown };
-    if (!Array.isArray(parsed.connections)) return false;
-    document = { connections: parsed.connections as Record<string, unknown>[] };
-  } catch {
+/**
+ * Delete a connection, after asking.
+ *
+ * Modal, because this edits a file the user wrote and the undo for it is "type
+ * it again". The name is in the prompt so a misclick on the wrong row is visible
+ * before it is irreversible.
+ */
+export async function removeConnection(
+  client: DbRexClient,
+  connection: ConnectionInfo,
+  configDir: string,
+): Promise<boolean> {
+  if (connection.origin === 'inline') {
+    void vscode.window.showWarningMessage(
+      `DbRex: "${connection.name}" is defined by directives in a .sql file. `
+      + 'Remove them from the file instead.',
+    );
     return false;
   }
 
-  const entry = document.connections.find(c => c['name'] === name);
-  if (!entry) return false;
-
-  if (typeof entry['options'] === 'object' && entry['options'] !== null
-      && option in (entry['options'] as Record<string, unknown>)) {
-    (entry['options'] as Record<string, unknown>)[option] = value;
-  } else {
-    entry[option] = value;
+  const file = fileHolding(connection, configDir);
+  if (file === undefined) {
+    void vscode.window.showErrorMessage('DbRex: could not find the file this connection came from.');
+    return false;
   }
 
-  fs.writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`);
+  const confirmed = await vscode.window.showWarningMessage(
+    `Delete the connection "${connection.name}"?`,
+    { modal: true, detail: `It will be removed from ${file}. Stored passwords are left alone.` },
+    'Delete',
+  );
+  if (confirmed !== 'Delete') return false;
+
+  if (!removeConnectionEntry(file, connection.name)) {
+    void vscode.window.showErrorMessage(`DbRex: "${connection.name}" is not in ${file}.`);
+    return false;
+  }
+
+  await client.call({ op: 'reloadConnections' });
   return true;
 }
 
@@ -200,26 +225,4 @@ async function askField(field: FieldSpec, provider: string): Promise<unknown> {
 
   if (value === undefined || value.trim().length === 0) return undefined;
   return field.type === 'number' ? Number(value) : value;
-}
-
-/**
- * Add one entry to a connections file, creating it if necessary.
- *
- * Deliberately not a rewrite of the file: people put comments and ordering in
- * these by hand, and a wizard that reformats someone's config is a wizard they
- * stop using.
- */
-function append(file: string, connection: Record<string, unknown>): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-
-  let document: { connections: unknown[] } = { connections: [] };
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { connections?: unknown };
-    if (Array.isArray(parsed.connections)) document = { connections: parsed.connections };
-  } catch {
-    /* a new or unreadable file starts empty; the daemon reports unreadable ones */
-  }
-
-  document.connections.push(connection);
-  fs.writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`);
 }
