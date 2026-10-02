@@ -150,6 +150,24 @@
         "encrypt": true,
         "trustServerCertificate": true
       }
+    },
+    {
+      "name": "files",
+      "kind": "dir",
+      "reference": "A local folder, indexed and queried with DuckDB. Seeded by seed/dir.sh.",
+      "options": {
+        "path": "/home/dbrex/data",
+        "recursive": true
+      }
+    },
+    {
+      "name": "files-csv-only",
+      "kind": "dir",
+      "reference": "The same folder with an include glob, so the filter is exercised.",
+      "options": {
+        "path": "/home/dbrex/data",
+        "include": "*.csv"
+      }
     }
   ]
 }

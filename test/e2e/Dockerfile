@@ -21,6 +21,7 @@ RUN useradd --create-home --shell /bin/bash dbrex \
 
 COPY --chown=dbrex:dbrex --chmod=755 verify.sh verify-install.sh verify-risingwave.sh /opt/dbrex/
 COPY --chown=dbrex:dbrex connections.json /opt/dbrex/connections.json
+COPY --chown=dbrex:dbrex --chmod=755 seed/dir.sh /opt/dbrex/seed-dir.sh
 
 USER dbrex
 WORKDIR /home/dbrex

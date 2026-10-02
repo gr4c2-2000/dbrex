@@ -282,6 +282,45 @@ check "a nested object is flattened to its dotted name" 'client.ip' "${DBREX[@]}
 # wander onto indices this connection was not meant to reach.
 check "a scoped connection browses only its index" 'events' "${DBREX[@]}" browse es-events
 
+say "A local directory, as a tree"
+/opt/dbrex/seed-dir.sh /home/dbrex/data >/dev/null
+# That browsing needs no DuckDB at all is a unit test; by this point in the run it
+# is installed, so claiming it here would be claiming something not being tested.
+check "the folder lists its files"       'top.csv'  "${DBREX[@]}" browse files
+check "a subdirectory is a container"    'events'   "${DBREX[@]}" browse files
+check "it descends"                      'part-0.csv' "${DBREX[@]}" browse files events "day=2026-10-01"
+check "a file carries its size"          'B$|KB'    "${DBREX[@]}" browse files
+check "the include glob filters"         'top.csv'  "${DBREX[@]}" browse files-csv-only
+# README has no .csv extension, so the folder holding it is not in the index and
+# must not appear in the tree either.
+check "and leaves out what it excludes" '^clean$' \
+  bash -c "${DBREX[*]} browse files-csv-only | grep -q docs && echo dirty || echo clean"
+
+say "A local directory, queried"
+check "the file index is queryable"      'top.csv'  "${DBREX[@]}" query files "SELECT name, extension, size FROM dbrex_files ORDER BY name"
+check "a CSV in the root reads"          '84210'    "${DBREX[@]}" query files "SELECT hits FROM read_csv_auto('/home/dbrex/data/top.csv') ORDER BY hits DESC"
+check "a CSV in a subdirectory reads"    '7'        "${DBREX[@]}" query files "SELECT hits FROM read_csv_auto('/home/dbrex/data/events/day=2026-10-01/part-0.csv')"
+check "a JSON file reads"                'x'        "${DBREX[@]}" query files "SELECT b FROM read_json_auto('/home/dbrex/data/events/events.ndjson') ORDER BY a"
+check "a glob across the folder reads"   '2'        "${DBREX[@]}" query files "SELECT count(DISTINCT kind) FROM read_csv_auto('/home/dbrex/data/*.csv')"
+check "the index joins to the data"      'top.csv'  "${DBREX[@]}" query files "SELECT name FROM dbrex_files WHERE extension = 'csv' AND size > 20"
+
+say "The directory is a boundary, not a suggestion"
+# DuckDB reads any path it is handed, so this is the property that makes the
+# provider safe rather than merely scoped. Verified against the real engine.
+refuse "a file outside the root is refused" \
+  "${DBREX[@]}" query files "SELECT * FROM read_csv_auto('/home/dbrex/dir-outside/private.csv')"
+check_message "and says it was a permission" 'Permission|not allowed|Cannot access' \
+  "${DBREX[@]}" query files "SELECT * FROM read_csv_auto('/home/dbrex/dir-outside/private.csv')"
+refuse "/etc/passwd is refused" \
+  "${DBREX[@]}" query files "SELECT * FROM read_csv('/etc/passwd')"
+refuse "a statement cannot widen the allow list" \
+  "${DBREX[@]}" query files "SET allowed_directories=['/']"
+refuse "a statement cannot re-enable external access" \
+  "${DBREX[@]}" query files "SET enable_external_access=true"
+# And having tried, the connection still works: the refusal is not a broken session.
+check "the session survives a refused escape" 'top.csv' \
+  "${DBREX[@]}" query files "SELECT name FROM dbrex_files"
+
 say "Object store"
 check "buckets list without DuckDB" 'analytics' "${DBREX[@]}" browse lake
 check "objects list inside a bucket" 'events'   "${DBREX[@]}" browse lake analytics

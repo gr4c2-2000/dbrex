@@ -8,6 +8,7 @@
 
 import type { Provider } from '@dbrex/core';
 import { clickhouseProvider } from './clickhouse';
+import { dirProvider } from './dir';
 import { elasticsearchProvider } from './elasticsearch';
 import { kafkaProvider } from './kafka';
 import { mssqlProvider } from './mssql';
@@ -26,5 +27,6 @@ export function builtinProviders(): Provider[] {
     s3Provider,
     kafkaProvider,
     elasticsearchProvider,
+    dirProvider,
   ];
 }

@@ -23,7 +23,8 @@ agent keeps working.
   this window or to a terminal, and only those may answer.
 
 MySQL, PostgreSQL, SQL Server, ClickHouse, Trino (including SSO), S3-compatible
-object stores, Kafka, and Elasticsearch with OpenSearch.
+object stores, Kafka, Elasticsearch with OpenSearch, and a plain local
+directory.
 
 Several engines need no connector of their own, because they already speak one
 of these wires. RisingWave serves the PostgreSQL protocol, so `kind: postgres`
@@ -323,6 +324,58 @@ the client goes there next.
 For a topic that has to land somewhere durable and keep up, this is the wrong
 tool and an engine built for it is the right one — RisingWave's `CREATE TABLE
 ... WITH (connector = 'kafka')`, reachable through the postgres provider above.
+
+### A local directory
+
+Give it a path. It indexes the files, shows them in the Connections view, and
+lets you write SQL against them — the same DuckDB machinery the object-store
+provider uses, pointed at the folder the files are actually in while you are
+still working on them.
+
+```json
+{
+  "name": "files",
+  "kind": "dir",
+  "options": { "path": "$home/data", "include": "*.parquet" }
+}
+```
+
+Only `path` is required. `recursive` is on by default, `include` filters what
+gets indexed by a `*`/`?` glob, and `maxFiles` bounds the walk.
+
+**The index is queryable.** The walk produces a `dbrex_files` view, so the folder
+itself is something you can ask questions about:
+
+```sql
+-- what is in here, and how big
+SELECT extension, count(*) AS files, sum(size) AS bytes
+FROM dbrex_files
+GROUP BY extension
+ORDER BY bytes DESC
+```
+
+```sql
+-- and then read the data, with whichever reader fits
+SELECT * FROM read_parquet('/data/events/day=2026-10-01/part-0.parquet')
+```
+
+Clicking a file in the tree hands you a statement that reads it, with the reader
+chosen from the extension — `read_parquet`, `read_json_auto`, or DuckDB sniffing
+a delimited file.
+
+**A statement cannot leave the directory.** DuckDB will read any path it is
+given, so the root is enforced rather than merely displayed: the allowed
+directory is set, external access is switched off, and the configuration is then
+locked so a statement cannot widen it again. Reading a file outside the root, or
+`/etc/passwd`, comes back as a permission error. The order of those three
+settings matters — two of them achieve nothing on their own — which is why it is
+verified against a real DuckDB in `make verify` rather than assumed.
+
+Symlinks are indexed as neither files nor directories: a link out of the root
+would describe files the confinement refuses to read, which is a tree that lies.
+
+Browsing needs nothing installed. *Querying* needs DuckDB, which is the same
+`dbrex install-duckdb` the object store asks for.
 
 ### SQL Server, Azure SQL, Synapse and Fabric
 
