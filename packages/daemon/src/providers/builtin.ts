@@ -10,6 +10,7 @@ import type { Provider } from '@dbrex/core';
 import { clickhouseProvider } from './clickhouse';
 import { elasticsearchProvider } from './elasticsearch';
 import { kafkaProvider } from './kafka';
+import { mssqlProvider } from './mssql';
 import { mysqlProvider } from './mysql';
 import { postgresProvider } from './postgres';
 import { s3Provider } from './s3';
@@ -19,6 +20,7 @@ export function builtinProviders(): Provider[] {
   return [
     mysqlProvider,
     postgresProvider,
+    mssqlProvider,
     clickhouseProvider,
     trinoProvider,
     s3Provider,

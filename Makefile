@@ -15,10 +15,15 @@ test:
 
 # Everything: that an installation works, and that the result queries real
 # engines. Exits non-zero when any step fails.
+#
+# Both stages build. The scripts are copied into the image rather than mounted,
+# and `installer` and `runner` are separate services with separate images, so
+# building only one of them ran the other's checks from a stale copy — which is
+# a harness that can report on a script that is no longer on disk.
 verify:
 	docker compose -f $(E2E) run --rm --build installer; \
 	  install=$$?; \
-	  docker compose -f $(E2E) run --rm runner; \
+	  docker compose -f $(E2E) run --rm --build runner; \
 	  run=$$?; \
 	  docker compose -f $(E2E) down -v --remove-orphans >/dev/null 2>&1; \
 	  exit $$(( install | run ))

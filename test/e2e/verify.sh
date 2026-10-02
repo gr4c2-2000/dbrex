@@ -168,6 +168,36 @@ check "a timestamp keeps the server's text" '2026-09-16' "${DBREX[@]}" query pos
 check "a result larger than one chunk arrives whole" '1200 rows' \
   bash -c "${DBREX[*]} query postgres \"SELECT g FROM generate_series(1,1200) g\" >/dev/null && ${DBREX[*]} results 1"
 
+say "SQL Server"
+check "a SELECT returns rows"       '84210'   "${DBREX[@]}" query mssql "SELECT kind, hits FROM dbo.events ORDER BY hits DESC"
+check "browse lists the schemas"    'reporting' "${DBREX[@]}" browse mssql
+check "browse lists the tables"     'events'  "${DBREX[@]}" browse mssql dbo
+check "a view is listed too"        'busy'    "${DBREX[@]}" browse mssql dbo
+check "browse lists the columns"    'hits'    "${DBREX[@]}" browse mssql dbo events
+check "a column carries its type"   'BIGINT|bigint' "${DBREX[@]}" browse mssql dbo events
+check "a bracketed name is accepted" '84210'  "${DBREX[@]}" query mssql "SELECT hits FROM [dbo].[events] ORDER BY hits DESC"
+check "a non-default schema queries" 'example.com' "${DBREX[@]}" query mssql "SELECT email FROM reporting.users ORDER BY id"
+refuse "a bad statement is refused" "${DBREX[@]}" query mssql "SELECT * FROM dbo.nope"
+check_message "and names the object" 'nope'   "${DBREX[@]}" query mssql "SELECT * FROM dbo.nope"
+
+say "The row limit SQL Server actually accepts"
+# The whole reason LimitSyntax carries a `top` spelling. FETCH FIRST without an
+# ORDER BY does not parse in T-SQL, so an unordered SELECT under the default
+# limit has to come back with rows rather than a syntax error.
+check "an unordered SELECT survives the default limit" 'kind' \
+  "${DBREX[@]}" query mssql "SELECT * FROM dbo.events"
+# 102993 is the largest, so a respected TOP 1 returns exactly that one row.
+check "a statement that limits itself is left alone" '^hits$|102993' \
+  "${DBREX[@]}" query mssql "SELECT TOP 1 hits FROM dbo.events ORDER BY hits DESC"
+# A TOP would bind to one branch here, so the rewrite declines and the rows are
+# bounded on the way out instead.
+check "a UNION still returns rows"  'click' \
+  "${DBREX[@]}" query mssql "SELECT kind FROM dbo.events UNION SELECT kind FROM dbo.events"
+check "DISTINCT keeps its place before TOP" 'click' \
+  "${DBREX[@]}" query mssql "SELECT DISTINCT kind FROM dbo.events"
+check "a CTE is limited at its outer select" 'click' \
+  "${DBREX[@]}" query mssql "WITH c AS (SELECT kind, hits FROM dbo.events) SELECT * FROM c"
+
 say "ClickHouse"
 check "a SELECT returns rows"       '84210'    "${DBREX[@]}" query clickhouse "SELECT day, kind, hits FROM events ORDER BY day DESC"
 check "browse walks the tree"       'events'   "${DBREX[@]}" browse clickhouse analytics

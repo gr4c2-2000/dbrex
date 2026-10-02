@@ -16,7 +16,8 @@
     "mysql2": "^3.24.4",
     "pg": "^8.23.1",
     "pg-cursor": "^2.22.1",
-    "snappyjs": "^0.7.0"
+    "snappyjs": "^0.7.0",
+    "tedious": "^20.0.0"
   },
   "devDependencies": {
     "@dbrex/client": "0.1.0",

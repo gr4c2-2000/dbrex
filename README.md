@@ -22,10 +22,17 @@ agent keeps working.
 - Passwords are never accepted from an agent: the daemon routes the prompt to
   this window or to a terminal, and only those may answer.
 
-MySQL, PostgreSQL, ClickHouse, Trino (including SSO), S3-compatible object
-stores, Kafka, and Elasticsearch with OpenSearch. RisingWave needs no connector
-of its own: it speaks the PostgreSQL wire protocol, so `kind: postgres` on port
-4566 is the whole of it.
+MySQL, PostgreSQL, SQL Server, ClickHouse, Trino (including SSO), S3-compatible
+object stores, Kafka, and Elasticsearch with OpenSearch.
+
+Several engines need no connector of their own, because they already speak one
+of these wires. RisingWave serves the PostgreSQL protocol, so `kind: postgres`
+on port 4566 is the whole of it. Azure SQL, Synapse and Fabric are all
+`kind: mssql`. StarRocks and Apache Doris speak the MySQL protocol, so
+`kind: mysql` reaches them on port 9030. Amazon Redshift answers a
+PostgreSQL-derived wire on 5439 and `kind: postgres` connects in practice —
+though AWS does not document that path and steers you to its own drivers, so
+treat it as working rather than supported.
 
 Buckets browse out of the box over plain HTTPS. *Querying* files needs DuckDB,
 which is a 70 MB native component, so it is not bundled — run `dbrex
@@ -247,6 +254,60 @@ the client goes there next.
 For a topic that has to land somewhere durable and keep up, this is the wrong
 tool and an engine built for it is the right one — RisingWave's `CREATE TABLE
 ... WITH (connector = 'kafka')`, reachable through the postgres provider above.
+
+### SQL Server, Azure SQL, Synapse and Fabric
+
+One `kind: mssql` for all four: the same TDS wire, the same T-SQL, the same
+`INFORMATION_SCHEMA`.
+
+```json
+{
+  "name": "warehouse",
+  "kind": "mssql",
+  "secret": { "from": "vault" },
+  "options": {
+    "host": "sql.example",
+    "port": 1433,
+    "user": "$user",
+    "database": "analytics",
+    "encrypt": true
+  }
+}
+```
+
+**Fabric and Entra-only servers cannot use a password.** Microsoft's own
+documentation says SQL authentication is unsupported there. Set `auth` to
+`token` and let the secret source produce one, which makes the Azure CLI the
+whole of the credential:
+
+```json
+{
+  "name": "fabric",
+  "kind": "mssql",
+  "secret": {
+    "from": "command",
+    "argv": ["az", "account", "get-access-token",
+             "--resource", "https://database.windows.net/",
+             "--query", "accessToken", "-o", "tsv"]
+  },
+  "options": {
+    "host": "xxx.datawarehouse.fabric.microsoft.com",
+    "database": "mywarehouse",
+    "auth": "token"
+  }
+}
+```
+
+For a local container, `trustServerCertificate: true` accepts a self-signed
+certificate. Do not set it against a managed service — it turns off the check
+that the server is the one you meant.
+
+The default row limit is appended as `SELECT TOP n`, not `FETCH FIRST n ROWS
+ONLY`. T-SQL only allows `FETCH` after an `OFFSET`, and `OFFSET` only after an
+`ORDER BY`, so the standard clause would be a syntax error on an unordered
+statement rather than a smaller result. A statement with `UNION`, `EXCEPT` or
+`INTERSECT` is left alone and the rows are bounded on the way out instead: a
+`TOP` would bind to one branch and quietly limit the wrong thing.
 
 ### Elasticsearch and OpenSearch
 

@@ -56,6 +56,32 @@ services:
       timeout: 5s
       retries: 60
 
+  # Developer edition, which is the licence this image defaults to and is free
+  # for non-production use. 2 GB of RAM is the documented floor.
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: dbrexPw1!
+      MSSQL_PID: Developer
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  mssql-seed:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      mssql: { condition: service_healthy }
+    environment:
+      MSSQL_SA_PASSWORD: dbrexPw1!
+    volumes:
+      - ./seed/mssql.sh:/seed.sh:ro
+    entrypoint: ["bash", "/seed.sh"]
+    # The seed talks to the other container, so its own hostname is not localhost.
+    network_mode: service:mssql
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     environment:
@@ -181,10 +207,12 @@ services:
       clickhouse: { condition: service_healthy }
       minio-seed: { condition: service_completed_successfully }
       elasticsearch-seed: { condition: service_completed_successfully }
+      mssql-seed: { condition: service_completed_successfully }
       kafka-seed: { condition: service_completed_successfully }
     environment:
       # How the connections file reaches its passwords without a vault prompt.
       MYSQL_PASSWORD: dbrexpw
+      MSSQL_PASSWORD: dbrexPw1!
       POSTGRES_PASSWORD: rootpw
       CLICKHOUSE_PASSWORD: dbrexpw
       S3_SECRET: dbrexsecret
@@ -208,6 +236,7 @@ services:
       risingwave: { condition: service_healthy }
     environment:
       MYSQL_PASSWORD: dbrexpw
+      MSSQL_PASSWORD: dbrexPw1!
       POSTGRES_PASSWORD: rootpw
       CLICKHOUSE_PASSWORD: dbrexpw
       S3_SECRET: dbrexsecret
@@ -227,6 +256,7 @@ services:
       mysql: { condition: service_healthy }
     environment:
       MYSQL_PASSWORD: dbrexpw
+      MSSQL_PASSWORD: dbrexPw1!
       POSTGRES_PASSWORD: rootpw
       CLICKHOUSE_PASSWORD: dbrexpw
       S3_SECRET: dbrexsecret

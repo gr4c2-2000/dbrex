@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { endsOpenStatement, splitSql, statementAt } from '../src/sql/split';
-import { applyRowLimit, hasRowLimit, topLevelOnly } from '../src/sql/limit';
+import { applyRowLimit, hasRowLimit, isReadStatement, topLevelOnly } from '../src/sql/limit';
 import { configAt, parseDirectives, strandedConnection } from '../src/sql/directives';
 
 describe('splitSql', () => {
@@ -316,5 +316,110 @@ describe('a @conn stranded inside a statement', () => {
   it('accepts @dbname, which means the same thing', () => {
     const text = 'SELECT 1\n-- @dbname: other\nSELECT 2';
     expect(strandedConnection(text, splitSql(text)[0]!)).toBe('other');
+  });
+});
+
+describe('the row limit T-SQL accepts', () => {
+  const top = (sql: string, limit = 10) => applyRowLimit(sql, limit, 'top');
+
+  it('inserts TOP after SELECT', () => {
+    expect(top('SELECT * FROM t')).toBe('SELECT TOP 10 * FROM t');
+  });
+
+  it('puts TOP after DISTINCT, which is the only legal order', () => {
+    // `SELECT TOP 10 DISTINCT x` does not parse; the qualifier comes first.
+    expect(top('SELECT DISTINCT kind FROM t')).toBe('SELECT DISTINCT TOP 10 kind FROM t');
+  });
+
+  it('puts TOP after ALL too', () => {
+    expect(top('select all x from t')).toBe('select all TOP 10 x from t');
+  });
+
+  it('limits the outer query of a CTE, not the one inside it', () => {
+    expect(top('WITH c AS (SELECT 1 AS x) SELECT * FROM c'))
+      .toBe('WITH c AS (SELECT 1 AS x) SELECT TOP 10 * FROM c');
+  });
+
+  it('is not confused by a subquery in the FROM clause', () => {
+    expect(top('SELECT * FROM (SELECT 1) z')).toBe('SELECT TOP 10 * FROM (SELECT 1) z');
+  });
+
+  it('declines a statement with a set operator, where TOP would bind to one branch', () => {
+    for (const op of ['UNION', 'UNION ALL', 'EXCEPT', 'INTERSECT']) {
+      const sql = `SELECT a FROM t ${op} SELECT b FROM u`;
+      expect(top(sql), op).toBe(sql);
+    }
+  });
+
+  it('leaves a statement that already limits itself alone', () => {
+    expect(top('SELECT TOP 5 * FROM t')).toBe('SELECT TOP 5 * FROM t');
+  });
+
+  it('drops a trailing semicolon, as the other dialects do', () => {
+    expect(top('SELECT * FROM t ORDER BY a;')).toBe('SELECT TOP 10 * FROM t ORDER BY a');
+  });
+
+  it('leaves a write alone', () => {
+    expect(top('INSERT INTO t VALUES (1)')).toBe('INSERT INTO t VALUES (1)');
+    expect(top('UPDATE t SET x = 1')).toBe('UPDATE t SET x = 1');
+  });
+
+  it('leaves everything alone when the limit is off', () => {
+    expect(applyRowLimit('SELECT * FROM t', 0, 'top')).toBe('SELECT * FROM t');
+  });
+
+  it('is not fooled by the word union inside a string or an identifier', () => {
+    expect(top("SELECT * FROM t WHERE kind = 'union'"))
+      .toBe("SELECT TOP 10 * FROM t WHERE kind = 'union'");
+    expect(top('SELECT * FROM unionised')).toBe('SELECT TOP 10 * FROM unionised');
+  });
+
+  it('is not fooled by a SELECT inside a comment', () => {
+    expect(top('-- SELECT nothing\nSELECT * FROM t'))
+      .toBe('-- SELECT nothing\nSELECT TOP 10 * FROM t');
+  });
+});
+
+describe('a statement under its own directive', () => {
+  /**
+   * The regression this guards. A statement keeps its leading comments, so the
+   * tool's own `-- @conn:` idiom — and everything the schema tree injects — used
+   * to look like something other than a SELECT, and the default row limit was
+   * silently never applied. The engine was asked for the whole table while the
+   * setting promised the opposite.
+   */
+  it('still gets a row limit', () => {
+    expect(applyRowLimit('-- @conn: prod\nSELECT * FROM t', 1000, 'limit'))
+      .toBe('-- @conn: prod\nSELECT * FROM t LIMIT 1000');
+  });
+
+  it('gets a TOP in the right place too', () => {
+    expect(applyRowLimit('-- @conn: prod\nSELECT * FROM t', 1000, 'top'))
+      .toBe('-- @conn: prod\nSELECT TOP 1000 * FROM t');
+  });
+
+  it('is recognised behind a block comment as well', () => {
+    expect(applyRowLimit('/* note */ SELECT * FROM t', 10, 'limit'))
+      .toBe('/* note */ SELECT * FROM t LIMIT 10');
+  });
+
+  it('is recognised behind several comment lines', () => {
+    const sql = '-- one\n-- two\nSELECT 1';
+    expect(applyRowLimit(sql, 10, 'limit')).toBe(`${sql} LIMIT 10`);
+  });
+
+  it('does not make a write look like a read', () => {
+    const sql = '-- a note\nINSERT INTO t VALUES (1)';
+    expect(applyRowLimit(sql, 10, 'limit')).toBe(sql);
+    expect(isReadStatement(sql)).toBe(false);
+  });
+
+  it('reads a commented SELECT as a read statement', () => {
+    expect(isReadStatement('-- @conn: prod\nSELECT 1')).toBe(true);
+    expect(isReadStatement('/* x */ SHOW TABLES')).toBe(true);
+  });
+
+  it('is not fooled by a keyword that only appears in the comment', () => {
+    expect(isReadStatement('-- SELECT something\nDELETE FROM t')).toBe(false);
   });
 });

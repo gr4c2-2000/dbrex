@@ -133,6 +133,23 @@
         "protocol": "http",
         "index": "events"
       }
+    },
+    {
+      "name": "mssql",
+      "kind": "mssql",
+      "reference": "Disposable SQL Server for the end-to-end run. Seeded from seed/mssql.sh.",
+      "secret": {
+        "from": "env",
+        "name": "MSSQL_PASSWORD"
+      },
+      "options": {
+        "host": "mssql",
+        "port": 1433,
+        "user": "sa",
+        "database": "analytics",
+        "encrypt": true,
+        "trustServerCertificate": true
+      }
     }
   ]
 }

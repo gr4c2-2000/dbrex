@@ -14,6 +14,16 @@
 export type LimitSyntax =
   | 'limit'        // MySQL, ClickHouse, DuckDB, Trino: `... LIMIT n`
   | 'fetch-first'  // SQL standard: `... FETCH FIRST n ROWS ONLY`
+  /**
+   * T-SQL: `SELECT TOP n ...`.
+   *
+   * Separate from `fetch-first` because SQL Server's `FETCH` is only legal
+   * after an `OFFSET`, and `OFFSET` is only legal after an `ORDER BY`. Appending
+   * the standard clause to an unordered SELECT there is not a narrower result,
+   * it is a syntax error — and with a default limit switched on, it would be one
+   * on nearly every statement.
+   */
+  | 'top'
   | 'none';        // no row-limiting clause; the caller must slice
 
 /** How far a cancellation actually reaches. */
